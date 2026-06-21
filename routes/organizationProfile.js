@@ -11,7 +11,9 @@ const {
     getDetails,
     updateLocation,
     updateTime,
-    updateDetails
+    updateDetails,
+    setWorkingDays,
+    updateWorkingDays
 } = require('../controllers/organizationProfileController');
 
 // Storage configuration
@@ -60,5 +62,15 @@ router.put('/update-time', authenticateJWT, updateTime);
  * Update Organization Details (Name, Address, Profile Pic, etc.)
  */
 router.put('/update-details', authenticateJWT, updateDetails);
+
+/**
+ * Set Working Days for Organization
+ */
+router.post('/set-working-days', authenticateJWT, setWorkingDays);
+
+/**
+ * Update Working Days for Organization
+ */
+router.put('/update-working-days', authenticateJWT, updateWorkingDays);
 
 module.exports = router;

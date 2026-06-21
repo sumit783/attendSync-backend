@@ -54,7 +54,7 @@ exports.setLocation = async (req, res) => {
 };
 
 exports.setTime = async (req, res) => {
-    const { inTime, outTime } = req.body;
+    const { inTime, outTime, workingDays } = req.body;
     const organizationId = req.user.id;
 
     if (!organizationId || !inTime || !outTime) {
@@ -69,6 +69,9 @@ exports.setTime = async (req, res) => {
 
         organization.inTime = inTime;
         organization.outTime = outTime;
+        if (workingDays && Array.isArray(workingDays)) {
+            organization.workingDays = workingDays;
+        }
 
         await organization.save();
         res.status(200).send({ message: 'In-Time and Out-Time set successfully', organization });
@@ -126,7 +129,7 @@ exports.updateLocation = async (req, res) => {
 };
 
 exports.updateTime = async (req, res) => {
-    const { inTime, outTime } = req.body;
+    const { inTime, outTime, workingDays } = req.body;
     const organizationId = req.user.id;
 
     if (!organizationId || !inTime || !outTime) {
@@ -141,6 +144,9 @@ exports.updateTime = async (req, res) => {
 
         organization.inTime = inTime;
         organization.outTime = outTime;
+        if (workingDays && Array.isArray(workingDays)) {
+            organization.workingDays = workingDays;
+        }
 
         await organization.save();
         res.status(200).send({ message: 'In-Time and Out-Time updated successfully', organization });
@@ -172,6 +178,52 @@ exports.updateDetails = async (req, res) => {
 
         await organization.save();
         res.status(200).send({ message: 'Organization details updated successfully', organization });
+    } catch (error) {
+        res.status(500).send({ message: 'Internal Server Error', error });
+    }
+};
+
+exports.setWorkingDays = async (req, res) => {
+    const { workingDays } = req.body;
+    const organizationId = req.user.id;
+
+    if (!workingDays || !Array.isArray(workingDays)) {
+        return res.status(400).send({ message: 'workingDays array is required' });
+    }
+
+    try {
+        const organization = await Organization.findById(organizationId);
+        if (!organization) {
+            return res.status(404).send({ message: 'Organization not found' });
+        }
+
+        organization.workingDays = workingDays;
+        await organization.save();
+        
+        res.status(200).send({ message: 'Working days set successfully', organization });
+    } catch (error) {
+        res.status(500).send({ message: 'Internal Server Error', error });
+    }
+};
+
+exports.updateWorkingDays = async (req, res) => {
+    const { workingDays } = req.body;
+    const organizationId = req.user.id;
+
+    if (!workingDays || !Array.isArray(workingDays)) {
+        return res.status(400).send({ message: 'workingDays array is required' });
+    }
+
+    try {
+        const organization = await Organization.findById(organizationId);
+        if (!organization) {
+            return res.status(404).send({ message: 'Organization not found' });
+        }
+
+        organization.workingDays = workingDays;
+        await organization.save();
+        
+        res.status(200).send({ message: 'Working days updated successfully', organization });
     } catch (error) {
         res.status(500).send({ message: 'Internal Server Error', error });
     }
