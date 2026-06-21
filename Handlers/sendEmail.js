@@ -1,11 +1,21 @@
 const { Resend } = require('resend');
 require('dotenv').config();
 
-// Initialize Resend with your API Key
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Initialize Resend conditionally so it doesn't crash the server on startup if the key is missing
+let resend;
+if (process.env.RESEND_API_KEY) {
+  resend = new Resend(process.env.RESEND_API_KEY);
+} else {
+  console.warn('⚠️ RESEND_API_KEY is missing. Emails will not be sent.');
+}
 
 // Function to send OTP email
 const sendOTPEmail = async (email, otp, subject) => {
+  if (!resend) {
+    console.error('❌ Cannot send OTP: RESEND_API_KEY is missing.');
+    return;
+  }
+
   try {
     const { data, error } = await resend.emails.send({
       // Resend requires a verified domain to send from. 
