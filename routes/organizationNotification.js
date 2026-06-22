@@ -37,18 +37,21 @@ router.get('/organization/notifications', authenticateJWT, async (req, res) => {
 
 // ================== Mark Notification as Read ==================
 router.post('/organization/notifications/read', authenticateJWT, async (req, res) => {
-    const { notificationId } = req.body;
+    const { notificationId, notificationIds } = req.body;
 
     try {
-        const notification = await Notification.findById(notificationId);
-        if (!notification) {
-            return res.status(404).send({ message: 'Notification not found' });
+        const ids = notificationIds || (notificationId ? [notificationId] : []);
+        
+        if (ids.length === 0) {
+            return res.status(400).send({ message: 'No notification IDs provided' });
         }
 
-        notification.isRead = true;
-        await notification.save();
+        await Notification.updateMany(
+            { _id: { $in: ids } },
+            { $set: { isRead: true } }
+        );
 
-        res.status(200).send({ message: 'Notification marked as read' });
+        res.status(200).send({ message: 'Notifications marked as read' });
     } catch (error) {
         console.error('Error in /organization/notifications/read:', error);
         res.status(500).send({ message: 'Server error', error: error.message }); 
