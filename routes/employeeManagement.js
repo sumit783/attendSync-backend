@@ -388,7 +388,7 @@ router.post('/upload-profile-pic', authenticateJWT, upload.single('profilePic'),
         }
 
         // Save the file path to the employee's profile
-        const filePath = req.file.path; // Local path to the file
+        const filePath = req.file.path.replace(/\\/g, '/'); // Local path to the file
         employeeInstance.profilePic = filePath;
         await employeeInstance.save();
 

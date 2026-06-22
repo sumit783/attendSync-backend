@@ -7,7 +7,7 @@ const employeeSchema = new mongoose.Schema({
     password: { type: String, required: true }, // Store hashed password
     profilePic: { type: String },
     organizationCode: { type: String },
-    // role: { type: String, enum: ['Employee', 'Manager', 'Admin'], default: 'Employee' },
+    role: { type: String, enum: ['Employee', 'Manager', 'Admin'], default: 'Employee' },
     isVerified: { type: Boolean, default: false },
     otp: { type: String },
     otpExpires: { type: Date },

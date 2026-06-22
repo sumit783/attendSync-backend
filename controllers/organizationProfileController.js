@@ -14,7 +14,7 @@ exports.uploadProfilePic = async (req, res) => {
             return res.status(404).send({ message: 'Organization not found' });
         }
 
-        organization.organizationProfilePic = req.file.path; // Save path to DB
+        organization.organizationProfilePic = req.file.path.replace(/\\/g, '/'); // Save path to DB
         await organization.save();
 
         res.status(200).send({

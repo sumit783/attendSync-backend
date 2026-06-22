@@ -91,6 +91,11 @@ router.post('/login', async (req, res) => {
 
     const userType = user.employeeEmail ? 'Employee' : 'Organization';
 
+    let finalUser = user;
+    if (userType === 'Employee') {
+        finalUser = await Employee.findById(user._id).populate('organization');
+    }
+
     const token = jwt.sign({ id: user._id, email: user.email || user.organizationEmail }, process.env.JWT_SECRET, { expiresIn: '60d' });
 
     res.status(200).send({
@@ -98,8 +103,8 @@ router.post('/login', async (req, res) => {
         id: user._id,
         token,
         organizationCode: user.organizationCode || null,
-        employee: userType === 'Employee' ? user : undefined,
-        organization: userType === 'Organization' ? user : undefined
+        employee: userType === 'Employee' ? finalUser : undefined,
+        organization: userType === 'Organization' ? finalUser : undefined
     });
 });
 

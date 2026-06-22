@@ -526,4 +526,38 @@ router.get('/employee-details/:employeeId', authenticateJWT, async (req, res) =>
   }
 });
 
+// ================== Delete an Employee ==================
+router.delete('/employee/:employeeId', authenticateJWT, async (req, res) => {
+  try {
+    const token = req.headers.authorization.split(' ')[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    const organization = await Organization.findById(decoded.id);
+    if (!organization) {
+      return res.status(404).send({ message: 'Organization not found' });
+    }
+
+    const { employeeId } = req.params;
+
+    // Verify that the employee belongs to this organization
+    const employee = await Employee.findOne({
+      _id: employeeId,
+      organizationCode: organization.organizationCode,
+    });
+
+    if (!employee) {
+      return res.status(404).send({ message: 'Employee not found in your organization' });
+    }
+
+    // Soft delete: keep the records but mark employee as inactive
+    employee.status = 'inactive';
+    await employee.save();
+
+    res.status(200).send({ message: 'Employee deleted successfully' });
+  } catch (error) {
+    console.error('Error in /employee/:employeeId DELETE:', error);
+    res.status(500).send({ message: 'Server error', error: error.message });
+  }
+});
+
 module.exports = router;
