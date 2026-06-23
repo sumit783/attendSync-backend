@@ -680,10 +680,10 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
             }
         });
 
-        // Sort rows by Employee Name, then Date
+        // Sort rows by Date, then Employee Name
         rows.sort((a, b) => {
-            if (a.name !== b.name) return a.name.localeCompare(b.name);
-            return a.rawDate - b.rawDate;
+            if (a.rawDate !== b.rawDate) return a.rawDate - b.rawDate;
+            return a.name.localeCompare(b.name);
         });
 
         // Remove rawDate and add to worksheet
