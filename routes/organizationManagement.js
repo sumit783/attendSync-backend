@@ -633,14 +633,17 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
 
         // Add Attendance Data
         attendances.forEach(att => {
+            const firstSession = att.sessions && att.sessions.length > 0 ? att.sessions[0] : null;
+            const lastSession = att.sessions && att.sessions.length > 0 ? att.sessions[att.sessions.length - 1] : null;
+
             rows.push({
                 name: att.employee ? att.employee.employeeName : 'Unknown',
                 email: att.employee ? att.employee.employeeEmail : 'Unknown',
                 date: moment(att.date).tz(tz).format('YYYY-MM-DD'),
                 status: att.finalRemark || 'Present',
-                inTime: att.inTime ? moment(att.inTime).tz(tz).format('hh:mm A') : '-',
-                outTime: att.outTime ? moment(att.outTime).tz(tz).format('hh:mm A') : '-',
-                hours: att.duration || '-',
+                inTime: firstSession && firstSession.clockInTime ? moment(firstSession.clockInTime).tz(tz).format('hh:mm A') : '-',
+                outTime: lastSession && lastSession.clockOutTime ? moment(lastSession.clockOutTime).tz(tz).format('hh:mm A') : '-',
+                hours: att.totalHours ? att.totalHours.toFixed(2) : '-',
                 rawDate: moment(att.date).tz(tz).startOf('day').valueOf()
             });
         });
