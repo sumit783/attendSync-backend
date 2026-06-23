@@ -10,7 +10,8 @@ const createNotification = async (userId, organizationId, message, type, session
             target
         });
 
-        await newNotification.save({ session });
+        const options = session ? { session } : {};
+        await newNotification.save(options);
     } catch (error) {
         console.error('Error creating notification:', error);
         throw error; // Ensure error is caught in the transaction

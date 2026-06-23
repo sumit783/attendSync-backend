@@ -74,7 +74,7 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
         }
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const employee = await Employee.findById(decoded.id).session(session);
+        const employee = await Employee.findById(decoded.id).populate('schedule').session(session);
         if (!employee) {
             await session.abortTransaction();
             return res.status(404).json({ message: 'Employee not found.' });
@@ -98,36 +98,81 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             return res.status(403).json({ message: 'You are not authorized to clock in/out for this organization.' });
         }
 
+        // ✅ Check if schedule is assigned
+        if (!employee.schedule) {
+            await session.abortTransaction();
+            return res.status(403).json({ message: 'Any schedule is not assign to you contact with your organization.' });
+        }
+
+        // ✅ Check if today is a working day
+        const currentDayName = moment().tz('Asia/Kolkata').format('dddd');
+        if (!employee.schedule.workingDays.includes(currentDayName)) {
+            await session.abortTransaction();
+            return res.status(403).json({ message: `Today (${currentDayName}) is not a working day according to your schedule.` });
+        }
+
+        // ✅ Check if there's an approved leave for today
+        const startOfDay = moment().tz('Asia/Kolkata').startOf('day').toDate();
+        const endOfDay = moment().tz('Asia/Kolkata').endOf('day').toDate();
+
+        const todayLeave = await Leave.findOne({
+            employee: employee._id,
+            status: 'Approved',
+            startDate: { $lte: endOfDay },
+            endDate: { $gte: startOfDay }
+        }).session(session);
+
+        let isWorkFromHome = false;
+
+        if (todayLeave) {
+            if (todayLeave.leaveType === 'Work From Home') {
+                isWorkFromHome = true;
+            } else {
+                await session.abortTransaction();
+                return res.status(403).json({ message: `You have an approved ${todayLeave.leaveType} for today. You cannot clock in.` });
+            }
+        }
+
         // ✅ Calculate distance
         const distance = haversineDistance(
             { latitude: employeeLatitude, longitude: employeeLongitude },
             { latitude: organization.location.coordinates[1], longitude: organization.location.coordinates[0] }
         );
 
-        console.log("Calculated Distance (KM):", distance);
-        console.log("Allowed Radius (KM):", organization.radius);
+        const distanceInMeters = distance * 1000;
 
-        if (distance > organization.radius) {
+        console.log("Calculated Distance (Meters):", distanceInMeters);
+        console.log("Allowed Radius (Meters):", organization.radius);
+
+        if (!isWorkFromHome && distanceInMeters > organization.radius) {
+            await createNotification(
+                employee._id,
+                organization._id,
+                `${employee.employeeName} attempted to clock-in/out from an unauthorized location (Distance: ${(distanceInMeters).toFixed(0)} meters).`,
+                'LocationAlert',
+                null, // Intentionally null so notification persists despite abortTransaction
+                'Organization'
+            );
             await session.abortTransaction();
             return res.status(400).json({ message: 'You are outside the allowed radius for clock-in/out.' });
         }
 
-        // ✅ Define organization in-time & out-time
+        // ✅ Define organization in-time & out-time (Now using employee schedule)
         const organizationInTime = moment.tz(
-            `${currentDate} ${organization.inTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata'
+            `${currentDate} ${employee.schedule.inTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata'
         ).utc().toDate();
 
         const organizationOutTime = moment.tz(
-            `${currentDate} ${organization.outTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata'
+            `${currentDate} ${employee.schedule.outTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata'
         ).utc().toDate();
 
         console.log("Current Local Time (IST):", moment().tz("Asia/Kolkata").format());
-        console.log("Organization In-Time (UTC):", organizationInTime);
-        console.log("Organization Out-Time (UTC):", organizationOutTime);
+        console.log("Schedule In-Time (UTC):", organizationInTime);
+        console.log("Schedule Out-Time (UTC):", organizationOutTime);
 
         // Calculate org shift window
-        let shiftStart = moment.tz(`${currentDate} ${organization.inTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata');
-        let shiftEnd = moment.tz(`${currentDate} ${organization.outTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata');
+        let shiftStart = moment.tz(`${currentDate} ${employee.schedule.inTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata');
+        let shiftEnd = moment.tz(`${currentDate} ${employee.schedule.outTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata');
 
         // Handle shifts that span midnight
         if (shiftEnd.isBefore(shiftStart)) {
