@@ -56,14 +56,16 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
 
         const employee = await prisma.employee.findUnique({
             where: { id: req.user.id },
-            include: { organization: true, devices: { where: { status: 'ACTIVE' } } }
+            include: { organization: true, shift: true, devices: { where: { status: 'ACTIVE' } } }
         });
 
         if (!employee) return res.status(404).json({ message: 'Employee not found.' });
 
         // ✅ Validate Device
-        if (employee.devices.length === 0 || employee.devices[0].uuid !== deviceId) {
-            return res.status(403).json({ message: 'Device not registered or revoked. Please contact administrator.' });
+        if (process.env.NODE_ENV !== 'development') {
+            if (employee.devices.length === 0 || employee.devices[0].uuid !== deviceId) {
+                return res.status(403).json({ message: 'Device not registered or revoked. Please contact administrator.' });
+            }
         }
 
         const organization = employee.organization;
@@ -87,11 +89,18 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             }
         }
 
-        const organizationInTime = moment.tz(`${currentDate} ${organization.inTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata').utc().toDate();
-        const organizationOutTime = moment.tz(`${currentDate} ${organization.outTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata').utc().toDate();
+        const inTimeStr = employee.shift ? employee.shift.startTime : organization.inTime;
+        const outTimeStr = employee.shift ? employee.shift.endTime : organization.outTime;
+        
+        // Parse time using standard format if it's from shift (HH:mm) or organization format
+        const orgInFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
+        const orgOutFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
 
-        let shiftStart = moment.tz(`${currentDate} ${organization.inTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata');
-        let shiftEnd = moment.tz(`${currentDate} ${organization.outTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata');
+        const organizationInTime = moment.tz(`${currentDate} ${inTimeStr}`, `YYYY-MM-DD ${orgInFormat}`, 'Asia/Kolkata').utc().toDate();
+        const organizationOutTime = moment.tz(`${currentDate} ${outTimeStr}`, `YYYY-MM-DD ${orgOutFormat}`, 'Asia/Kolkata').utc().toDate();
+
+        let shiftStart = moment.tz(`${currentDate} ${inTimeStr}`, `YYYY-MM-DD ${orgInFormat}`, 'Asia/Kolkata');
+        let shiftEnd = moment.tz(`${currentDate} ${outTimeStr}`, `YYYY-MM-DD ${orgOutFormat}`, 'Asia/Kolkata');
         if (shiftEnd.isBefore(shiftStart)) shiftEnd.add(1, 'day');
 
         // Find today's attendance
@@ -154,16 +163,24 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             const updatedSessions = await prisma.session.findMany({ where: { attendanceId: attendanceRecord.id } });
             const totalHours = updatedSessions.reduce((acc, s) => acc + (s.duration || 0), 0);
             
+            // Calculate extra hours
+            const expectedDurationMs = moment(organizationOutTime).diff(moment(organizationInTime));
+            const expectedHours = expectedDurationMs > 0 ? expectedDurationMs / (1000 * 60 * 60) : 0;
+            let extraHours = 0;
+            if (expectedHours > 0 && totalHours > expectedHours) {
+                extraHours = parseFloat((totalHours - expectedHours).toFixed(2));
+            }
+            
             let finalRemark = 'Present';
             if (totalHours < 4) finalRemark = 'Half Day';
             else if (clockOutRemark === 'Left Early') finalRemark = 'Left Early';
 
             await prisma.attendance.update({
                 where: { id: attendanceRecord.id },
-                data: { totalHours, finalRemark }
+                data: { totalHours, extraHours, finalRemark }
             });
 
-            return res.status(200).json({ message: 'Clocked out successfully.', clockOutTime: currentLocalTime, totalHours, finalRemark });
+            return res.status(200).json({ message: 'Clocked out successfully.', clockOutTime: currentLocalTime, totalHours, extraHours, finalRemark });
         } else {
             // Additional Clock-in
             await prisma.session.create({
@@ -307,7 +324,7 @@ router.get('/profile', authenticateJWT, async (req, res) => {
         // Fetch the employee by ID with populated organization details
         const employeeInstance = await prisma.employee.findUnique({
             where: { id: decoded.id },
-            include: { organization: true }
+            include: { organization: true, shift: true }
         });
         if (!employeeInstance) {
             return res.status(404).send({ message: 'Employee not found' });
@@ -325,6 +342,7 @@ router.get('/profile', authenticateJWT, async (req, res) => {
             createdAt: employeeInstance.createdAt,
             updatedAt: employeeInstance.updatedAt,
             organization: employeeInstance.organization,
+            shift: employeeInstance.shift,
         });
     } catch (error) {
         console.error('Error fetching employee profile:', error);

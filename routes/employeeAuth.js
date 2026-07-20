@@ -85,7 +85,7 @@ router.post('/login', async (req, res) => {
     try {
         const { email, password, deviceId, deviceModel, manufacturer, platform, osVersion } = req.body;
 
-        const employee = await prisma.employee.findUnique({ where: { employeeEmail: email }, include: { organization: true, devices: { where: { status: 'ACTIVE' } } } });
+        const employee = await prisma.employee.findUnique({ where: { employeeEmail: email }, include: { organization: true, shift: true, devices: { where: { status: 'ACTIVE' } } } });
         
         let userType = 'Employee';
         let user = employee;
@@ -118,7 +118,7 @@ router.post('/login', async (req, res) => {
                         status: 'ACTIVE'
                     }
                 });
-            } else if (user.devices[0].uuid !== deviceId) {
+            } else if (user.devices[0].uuid !== deviceId && process.env.NODE_ENV !== 'development') {
                 return res.status(403).send({ message: 'Unauthorized device. Please contact your admin to reset your device.' });
             }
         }

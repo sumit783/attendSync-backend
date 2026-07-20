@@ -38,6 +38,7 @@ model Organization {
 
   employees     Employee[]
   notifications Notification[]
+  shifts        Shift[]
 }
 
 model Employee {
@@ -60,6 +61,23 @@ model Employee {
   leaves        Leave[]
   notifications Notification[]
   devices       EmployeeDevice[]
+
+  shiftId       String?
+  shift         Shift?       @relation(fields: [shiftId], references: [id])
+}
+
+model Shift {
+  id               String       @id @default(uuid())
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id])
+  name             String
+  startTime        String
+  endTime          String
+  weekOffs         String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  employees        Employee[]
 }
 
 model EmployeeDevice {
@@ -93,6 +111,7 @@ model Attendance {
   sessions Session[]
 
   totalHours  Float    @default(0)
+  extraHours  Float    @default(0)
   finalRemark String   @default("Absent")
   createdAt   DateTime @default(now())
   updatedAt   DateTime @default(now())

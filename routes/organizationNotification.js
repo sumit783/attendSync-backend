@@ -27,7 +27,7 @@ router.get('/organization/notifications', authenticateJWT, async (req, res) => {
                 isRead: false
             },
             include: {
-                employee: {
+                user: {
                     select: { employeeName: true, employeeEmail: true }
                 }
             },
