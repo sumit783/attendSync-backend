@@ -114,8 +114,7 @@ router.post('/login', async (req, res) => {
                         uuid: deviceId,
                         model: deviceModel || 'Unknown',
                         manufacturer: manufacturer || 'Unknown',
-                        platform: platform || 'Unknown',
-                        osVersion: osVersion || 'Unknown',
+                        androidVersion: osVersion || 'Unknown',
                         status: 'ACTIVE'
                     }
                 });
@@ -124,7 +123,7 @@ router.post('/login', async (req, res) => {
             }
         }
 
-        const token = jwt.sign({ id: user.id, email: user.email || user.organizationEmail }, process.env.JWT_SECRET, { expiresIn: '60d' });
+        const token = jwt.sign({ id: user.id, email: user.employeeEmail || user.organizationEmail }, process.env.JWT_SECRET, { expiresIn: '60d' });
 
         res.status(200).send({
             message: `${userType} login successful`,
