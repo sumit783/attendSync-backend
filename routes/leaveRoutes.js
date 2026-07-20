@@ -1,15 +1,9 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const Employee = require('../models/employee');
-const Organization = require('../models/organization');
-const Leave = require('../models/leave');
+const prisma = require('../prisma/client');
 const authenticateJWT = require('../middleware/authenticateJWT');
 const router = express.Router();
-const createNotification = require('../Helpers/CreateNotification.js');
-const Notification = require('../models/notification'); // Adjust path if needed
-const mongoose = require('mongoose');
 
-// Utility function to format date as dd/mm/yyyy
 const formatDate = (date) => {
     const d = new Date(date);
     const day = String(d.getDate()).padStart(2, '0');
@@ -24,22 +18,34 @@ router.get('/organization/leave-requests', authenticateJWT, async (req, res) => 
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        const organization = await Organization.findById(decoded.id);
+        const organization = await prisma.organization.findUnique({
+            where: { id: decoded.id }
+        });
         if (!organization) {
             return res.status(404).send({ message: 'Organization not found' });
         }
 
-        //const leaveRequests = await Leave.find({ organizationCode: organization.organizationCode });
-        const leaveRequests = await Leave.find({
-            organizationCode: organization.organizationCode,
-            status: 'Pending' // Only fetch pending requests
-        }).populate({
-            path: 'employee', // Referencing the employee field
-            select: 'profilePic name email' // Fetch only required fields
+        const statusFilter = req.query.status;
+
+        const whereClause = {
+            organizationCode: organization.organizationCode
+        };
+        if (statusFilter) {
+            whereClause.status = statusFilter;
+        }
+
+        const leaveRequests = await prisma.leave.findMany({
+            where: whereClause,
+            include: {
+                employee: {
+                    select: { profilePic: true, employeeName: true, employeeEmail: true }
+                }
+            },
+            orderBy: { createdAt: 'desc' }
         });
         
         if (leaveRequests.length === 0) {
-            return res.status(200).send({ message: 'No leave requests found.' });
+            return res.status(200).send({ message: 'No leave requests found.', leaveRequests: [] });
         }
 
         res.status(200).send({ leaveRequests });
@@ -51,16 +57,13 @@ router.get('/organization/leave-requests', authenticateJWT, async (req, res) => 
 
 // ================== Leave Request (Employee) ==================
 router.post('/employee/leave-request', authenticateJWT, async (req, res) => {
-   
-    const { leaveType, startDate, endDate, reason,employeeId } = req.body;
+    const { leaveType, startDate, endDate, reason, employeeId } = req.body;
 
     try {
-        // Input validation
         if (!leaveType || !startDate || !endDate || !reason) {
             return res.status(400).send({ message: 'All fields (leaveType, startDate, endDate, reason) are required.' });
         }
 
-        // Validate date format and logical relationship
         const start = new Date(startDate);
         const end = new Date(endDate);
         if (isNaN(start.getTime()) || isNaN(end.getTime())) {
@@ -69,69 +72,66 @@ router.post('/employee/leave-request', authenticateJWT, async (req, res) => {
         if (end < start) {
             return res.status(400).send({ message: 'End date cannot be earlier than start date.' });
         }
-        console.log(employeeId) 
-        // Fetch employee details using the ID from params
-        const employee = await Employee.findById(employeeId);
+
+        const employee = await prisma.employee.findUnique({
+            where: { id: employeeId || req.user.id }
+        });
         if (!employee) {
             return res.status(404).send({ message: 'Employee not found.' });
         }
 
-        const overlappingLeaves = await Leave.findOne({
-            employee: employee._id,
-            status: { $ne: 'Rejected' }, // Exclude rejected leaves
-            $or: [
-                { startDate: { $lte: end }, endDate: { $gte: start } }
-            ]
+        const overlappingLeaves = await prisma.leave.findFirst({
+            where: {
+                employeeId: employee.id,
+                status: { not: 'Rejected' },
+                startDate: { lte: end },
+                endDate: { gte: start }
+            }
         });
-        
 
         if (overlappingLeaves) {
             return res.status(400).send({ message: 'A leave request already exists for the selected dates.' });
         }
 
-        // Create new leave request
-        const newLeaveRequest = new Leave({
-            employeeProfilePic: employee.profilePic,
-            organizationCode: employee.organizationCode,
-            employee: employee._id,
-            employeeName: employee.employeeName,
-            leaveType,
-            startDate,
-            endDate,
-            reason
+        const newLeaveRequest = await prisma.leave.create({
+            data: {
+                employeeProfilePic: employee.profilePic,
+                organizationCode: employee.organizationCode,
+                employeeId: employee.id,
+                employeeName: employee.employeeName,
+                leaveType,
+                startDate: start,
+                endDate: end,
+                reason,
+                status: 'Pending'
+            }
         });
 
-        await newLeaveRequest.save();
-
-        // ============ Create Notification for Organization ============
-        
-        const notification = new Notification({
-            user: employee._id, // The employee who triggered the notification
-            organization: employee.organization, // Must be ObjectId of the organization
-            message: `${employee.employeeName} has requested ${leaveType} leave starting from ${new Date(startDate).toDateString()}.`,
-            type: 'LeaveApproval',
-            target: 'Organization'
+        await prisma.notification.create({
+            data: {
+                userId: employee.id,
+                organizationId: employee.organizationId,
+                message: `${employee.employeeName} has requested ${leaveType} leave starting from ${start.toDateString()}.`,
+                type: 'LeaveApproval',
+                target: 'Organization',
+                isRead: false
+            }
         });
-        
-
-        await notification.save();
 
         res.status(201).send({
             message: 'Leave request submitted successfully.',
-            leaveId: newLeaveRequest._id
+            leaveId: newLeaveRequest.id
         });
     } catch (error) {
-        console.error('Error in /employee/:employeeId/leave-request:', error);
+        console.error('Error in /employee/leave-request:', error);
         res.status(500).send({ message: 'Server error', error: error.message });
     }
 });
 
-
 // ================== Leave Approval/Rejection (Admin) ==================
 router.post('/organization/leave-approval', authenticateJWT, async (req, res) => {
-    const { leaveId, status } = req.body; // Status: 'Approved' or 'Rejected'
+    const { leaveId, status } = req.body; 
 
-    // Validate status
     if (!['Approved', 'Rejected'].includes(status)) {
         return res.status(400).send({ message: 'Invalid status. Allowed values are Approved or Rejected.' });
     }
@@ -140,79 +140,60 @@ router.post('/organization/leave-approval', authenticateJWT, async (req, res) =>
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        // Fetch the admin's organization details
-        const organization = await Organization.findById(decoded.id);
+        const organization = await prisma.organization.findUnique({
+            where: { id: decoded.id }
+        });
         if (!organization) {
             return res.status(404).send({ message: 'Organization not found.' });
         }
 
-        // Validate leaveId
-        if (!leaveId || !mongoose.isValidObjectId(leaveId)) {
+        if (!leaveId) {
             return res.status(400).send({ message: 'Invalid or missing leaveId.' });
         }
 
-        // Find the leave request and populate related employee details
-        const leave = await Leave.findOne({
-            _id: leaveId,
-            organizationCode: organization.organizationCode
-        }).populate('employee', 'employeeName email'); // Populate only necessary fields
+        const leave = await prisma.leave.findFirst({
+            where: {
+                id: leaveId,
+                organizationCode: organization.organizationCode
+            },
+            include: { employee: true }
+        });
 
         if (!leave) {
             return res.status(404).send({ message: 'Leave request not found.' });
         }
 
-        // Update leave status
-        leave.status = status;
-        leave.updatedAt = new Date();
-        await leave.save();
-
-        const employeeNotification = new Notification({
-            user: leave.employee._id, // Notify the specific employee
-            organization: organization._id, // Still associated with the org but filtered by user
-            message: `Your leave request from ${leave.startDate.toDateString()} to ${leave.endDate.toDateString()} has been ${status.toLowerCase()}.`,
-            type: 'LeaveApproval',
-            target: 'Employee'
+        const updatedLeave = await prisma.leave.update({
+            where: { id: leaveId },
+            data: { status }
         });
-        
-        await employeeNotification.save();
+
+        await prisma.notification.create({
+            data: {
+                userId: leave.employeeId,
+                organizationId: organization.id, 
+                message: `Your leave request from ${leave.startDate.toDateString()} to ${leave.endDate.toDateString()} has been ${status.toLowerCase()}.`,
+                type: 'LeaveApproval',
+                target: 'Employee',
+                isRead: false
+            }
+        });
 
         res.status(200).send({
             message: `Leave request ${status.toLowerCase()} successfully.`,
             leave: {
-                id: leave._id,
+                id: updatedLeave.id,
                 employeeName: leave.employee.employeeName,
-                leaveType: leave.leaveType,
-                startDate: leave.startDate,
-                endDate: leave.endDate,
-                reason: leave.reason,
-                status: leave.status
+                leaveType: updatedLeave.leaveType,
+                startDate: updatedLeave.startDate,
+                endDate: updatedLeave.endDate,
+                reason: updatedLeave.reason,
+                status: updatedLeave.status
             }
         });
     } catch (error) {
         console.error('Error in /organization/leave-approval:', error);
         res.status(500).send({ message: 'Server error.', error: error.message });
-    }
-});
-
-
-// ================== GET Leave Requests (Admin) ==================
-router.get('/organization/leave-requests', authenticateJWT, async (req, res) => {
-    try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-        const organization = await Organization.findById(decoded.id);
-        if (!organization) {
-            return res.status(404).send({ message: 'Organization not found' });
-        }
-
-        const leaveRequests = await Leave.find({ organizationCode: organization.organizationCode })
-            .populate('employee', 'profilePic name email');
-
-        res.status(200).send({ leaveRequests });
-    } catch (error) {
-        console.error('Error fetching leave requests:', error);
-        res.status(500).send({ message: 'Server error', error: error.message });
     }
 });
 
@@ -222,12 +203,17 @@ router.get('/employee/leave-requests', authenticateJWT, async (req, res) => {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        const employee = await Employee.findById(decoded.id);
+        const employee = await prisma.employee.findUnique({
+            where: { id: decoded.id }
+        });
         if (!employee) {
             return res.status(404).send({ message: 'Employee not found' });
         }
 
-        const leaveRequests = await Leave.find({ employee: employee._id });
+        const leaveRequests = await prisma.leave.findMany({ 
+            where: { employeeId: employee.id },
+            orderBy: { createdAt: 'desc' }
+        });
 
         res.status(200).send({ leaveRequests });
     } catch (error) {

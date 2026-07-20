@@ -1,6 +1,6 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const Notification = require('../models/notification');
+const prisma = require('../prisma/client');
 const authenticateJWT = require('../middleware/authenticateJWT');
 const router = express.Router();
 
@@ -20,13 +20,19 @@ router.get('/organization/notifications', authenticateJWT, async (req, res) => {
             return res.status(400).send({ message: 'Organization ID missing in token' });
         }
 
-        const notifications = await Notification.find({
-            organization: organizationId,
-            target: 'Organization', // ✅ Filter only org-targeted notifications
-            isRead: false
-        })
-        .populate('user', 'name email')
-        .sort({ createdAt: -1 });
+        const notifications = await prisma.notification.findMany({
+            where: {
+                organizationId: organizationId,
+                target: 'Organization',
+                isRead: false
+            },
+            include: {
+                employee: {
+                    select: { employeeName: true, employeeEmail: true }
+                }
+            },
+            orderBy: { createdAt: 'desc' }
+        });
 
         res.status(200).send({ notifications });
     } catch (error) {
@@ -46,10 +52,10 @@ router.post('/organization/notifications/read', authenticateJWT, async (req, res
             return res.status(400).send({ message: 'No notification IDs provided' });
         }
 
-        await Notification.updateMany(
-            { _id: { $in: ids } },
-            { $set: { isRead: true } }
-        );
+        await prisma.notification.updateMany({
+            where: { id: { in: ids } },
+            data: { isRead: true }
+        });
 
         res.status(200).send({ message: 'Notifications marked as read' });
     } catch (error) {

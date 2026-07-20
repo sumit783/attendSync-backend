@@ -1,0 +1,180 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id                     String  @id @default(uuid())
+  organizationProfilePic String?
+  organizationName       String
+  organizationEmail      String  @unique
+  organizationOwnerName  String
+  password               String
+  organizationCode       String  @unique
+  isVerified             Boolean @default(false)
+  otp                    String?
+  otpExpires             DateTime?
+
+  address   String?
+  wifiSSID  String?
+  wifiBSSID String?
+
+  inTime  String?
+  outTime String?
+
+  latitude  Float    @default(0)
+  longitude Float    @default(0)
+  radius    Float?
+  createdAt DateTime @default(now())
+
+  // MySQL doesn't support scalar arrays, use Json
+  workingDays Json?
+
+  employeeCount Int @default(0)
+
+  employees     Employee[]
+  notifications Notification[]
+}
+
+model Employee {
+  id               String       @id @default(uuid())
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id])
+  employeeName     String
+  employeeEmail    String       @unique
+  password         String
+  profilePic       String?
+  organizationCode String?
+  role             Role         @default(Employee)
+  isVerified       Boolean      @default(false)
+  otp              String?
+  otpExpires       DateTime?
+  status           Status       @default(active)
+  lastLogin        DateTime?
+
+  attendances   Attendance[]
+  leaves        Leave[]
+  notifications Notification[]
+  devices       EmployeeDevice[]
+}
+
+model EmployeeDevice {
+  id             String       @id @default(uuid())
+  employeeId     String
+  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  uuid           String       @unique
+  model          String?
+  manufacturer   String?
+  androidVersion String?
+  appVersion     String?
+  firebaseToken  String?
+  status         DeviceStatus @default(ACTIVE)
+  registeredDate DateTime     @default(now())
+}
+
+model Attendance {
+  id               String   @id @default(uuid())
+  employeeId       String
+  employee         Employee @relation(fields: [employeeId], references: [id])
+  employeeName     String
+  organizationCode String
+  date             DateTime
+  wifiSSID         String?
+  wifiBSSID        String?
+  deviceId         String?
+  ipAddress        String?
+  latitude         Float?
+  longitude        Float?
+
+  sessions Session[]
+
+  totalHours  Float    @default(0)
+  finalRemark String   @default("Absent")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now())
+}
+
+model Session {
+  id             String     @id @default(uuid())
+  attendanceId   String
+  attendance     Attendance @relation(fields: [attendanceId], references: [id])
+  clockInTime    DateTime
+  clockOutTime   DateTime?
+  duration       Float      @default(0)
+  clockInRemark  String?
+  clockOutRemark String?
+}
+
+model Leave {
+  id               String      @id @default(uuid())
+  employeeId       String
+  employee         Employee    @relation(fields: [employeeId], references: [id])
+  employeeName     String
+  organizationCode String
+  leaveType        LeaveType
+  startDate        DateTime
+  endDate          DateTime
+  status           LeaveStatus @default(Pending)
+  reason           String?
+  createdAt        DateTime    @default(now())
+}
+
+model Notification {
+  id             String           @id @default(uuid())
+  userId         String
+  user           Employee         @relation(fields: [userId], references: [id])
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  message        String
+  type           NotificationType
+  createdAt      DateTime         @default(now())
+  isRead         Boolean          @default(false)
+  target         TargetType
+}
+
+enum Role {
+  Employee
+  Manager
+  Admin
+}
+
+enum Status {
+  active
+  inactive
+}
+
+enum LeaveType {
+  Sick_Leave     @map("Sick Leave")
+  Vacation_Leave @map("Vacation Leave")
+  Paid_Leave     @map("Paid Leave")
+  Unpaid_Leave   @map("Unpaid Leave")
+}
+
+enum LeaveStatus {
+  Pending
+  Approved
+  Rejected
+}
+
+enum NotificationType {
+  Reminder
+  LeaveApproval
+  Absent
+  ClockIn
+  ClockOut
+  Join
+}
+
+enum TargetType {
+  Employee
+  Organization
+}
+
+enum DeviceStatus {
+  ACTIVE
+  REVOKED
+}

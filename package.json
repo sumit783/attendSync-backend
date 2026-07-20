@@ -1,9 +1,9 @@
 {
   "name": "attendsyncbackend",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
-    "test": "cross-env NODE_ENV=test jest --runInBand --detectOpenHandles --forceExit",
+    "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
@@ -12,35 +12,30 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@prisma/client": "^5.22.0",
     "bcrypt": "^5.1.1",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
-    "express-mongo-sanitize": "^2.2.0",
     "express-rate-limit": "^8.5.2",
     "helmet": "^8.2.0",
     "hpp": "^0.2.3",
     "jsonwebtoken": "^9.0.2",
     "moment": "^2.30.1",
     "moment-timezone": "^0.5.48",
-    "mongoose": "^8.13.1",
     "morgan": "^1.11.0",
     "multer": "^1.4.5-lts.2",
     "node-cron": "^3.0.3",
     "node-schedule": "^2.1.1",
     "nodemailer": "^6.10.0",
     "nodemon": "^3.1.9",
-    "qrcode": "^1.5.4",
     "resend": "^6.14.0",
     "winston": "^3.19.0",
     "xss-clean": "^0.1.4"
   },
   "devDependencies": {
-    "cross-env": "^10.1.0",
-    "jest": "^30.4.2",
-    "mongodb-memory-server": "^11.2.0",
-    "supertest": "^7.2.2"
+    "prisma": "^5.22.0"
   }
 }

@@ -1,6 +1,6 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const Notification = require('../models/notification');
+const prisma = require('../prisma/client');
 const authenticateJWT = require('../middleware/authenticateJWT');
 const router = express.Router();
 
@@ -12,20 +12,22 @@ router.get('/employee/notifications', authenticateJWT, async (req, res) => {
 
         const employeeId = decoded.id;
 
-        const notifications = await Notification.find({
-            user: employeeId,
-            target: 'Employee', // ✅ Ensures it's meant for the employee
-            isRead: false
-        })
-        .sort({ createdAt: -1 });
+        const notifications = await prisma.notification.findMany({
+            where: {
+                userId: employeeId,
+                target: 'Employee',
+                isRead: false
+            },
+            orderBy: { createdAt: 'desc' }
+        });
 
         // Mark the fetched notifications as read
         if (notifications.length > 0) {
-            const notificationIds = notifications.map(n => n._id);
-            await Notification.updateMany(
-                { _id: { $in: notificationIds } },
-                { $set: { isRead: true } }
-            );
+            const notificationIds = notifications.map(n => n.id);
+            await prisma.notification.updateMany({
+                where: { id: { in: notificationIds } },
+                data: { isRead: true }
+            });
         }
 
         res.status(200).send({ notifications });
@@ -34,7 +36,6 @@ router.get('/employee/notifications', authenticateJWT, async (req, res) => {
         res.status(500).send({ message: 'Server error', error: error.message });
     }
 });
-
 
 // ================== Mark Notification as Read ==================
 router.post('/employee/notifications/read', authenticateJWT, async (req, res) => {
@@ -47,10 +48,10 @@ router.post('/employee/notifications/read', authenticateJWT, async (req, res) =>
             return res.status(400).send({ message: 'No notification IDs provided' });
         }
 
-        await Notification.updateMany(
-            { _id: { $in: ids } },
-            { $set: { isRead: true } }
-        );
+        await prisma.notification.updateMany({
+            where: { id: { in: ids } },
+            data: { isRead: true }
+        });
 
         res.status(200).send({ message: 'Notifications marked as read' });
     } catch (error) {

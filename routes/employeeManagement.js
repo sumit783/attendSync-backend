@@ -1,19 +1,12 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
-const Employee = require('../models/employee');
-const Organization = require('../models/organization');
-const Attendance = require('../models/attendance');
-const Leave = require('../models/leave.js');
 const authenticateJWT = require('../middleware/authenticateJWT');
 const haversineDistance = require('../Helpers/HaversineDistance.js');
 const createNotification = require('../Helpers/CreateNotification.js');
-const employee = require('../models/employee');
 const multer = require('multer');
-//const moment = require('moment');
-const mongoose = require('mongoose');
-const moment = require('moment-timezone'); // ✅ Correct import for timezone support
+const moment = require('moment-timezone');
+const prisma = require('../prisma/client');
 const router = express.Router();
-const path = require('path');
 
 // Configure Multer
 const storage = multer.diskStorage({
@@ -56,215 +49,136 @@ function parseTime(time) {
 }
 
 router.post('/clock-in-out', authenticateJWT, async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
     try {
-        const { scannerCode, employeeLatitude, employeeLongitude } = req.body;
+        const { wifiSSID, wifiBSSID, deviceId, ipAddress, employeeLatitude, employeeLongitude } = req.body;
         const currentDate = moment().tz('Asia/Kolkata').format('YYYY-MM-DD');
         const currentLocalTime = moment().tz('Asia/Kolkata').toDate();
 
-        console.log("Received scannerCode:", scannerCode);
+        const employee = await prisma.employee.findUnique({
+            where: { id: req.user.id },
+            include: { organization: true, devices: { where: { status: 'ACTIVE' } } }
+        });
 
-        // ✅ Extract and verify token
-        const token = req.headers.authorization?.split(' ')[1];
-        if (!token) {
-            await session.abortTransaction();
-            return res.status(401).json({ message: 'Authorization token is required.' });
+        if (!employee) return res.status(404).json({ message: 'Employee not found.' });
+
+        // ✅ Validate Device
+        if (employee.devices.length === 0 || employee.devices[0].uuid !== deviceId) {
+            return res.status(403).json({ message: 'Device not registered or revoked. Please contact administrator.' });
         }
 
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const employee = await Employee.findById(decoded.id).populate('schedule').session(session);
-        if (!employee) {
-            await session.abortTransaction();
-            return res.status(404).json({ message: 'Employee not found.' });
+        const organization = employee.organization;
+
+        // ✅ Check WiFi
+        if (organization.wifiSSID && organization.wifiSSID !== wifiSSID) {
+            return res.status(400).json({ message: `Wrong Wi-Fi. Please connect to ${organization.wifiSSID}.` });
+        }
+        if (organization.wifiBSSID && organization.wifiBSSID !== wifiBSSID) {
+            return res.status(400).json({ message: 'Wi-Fi BSSID mismatch.' });
         }
 
-        // ✅ Fetch organization using scannerCode
-        const organization = await Organization.findOne({ qrCode: scannerCode }).session(session);
-        if (!organization) {
-            await session.abortTransaction();
-            return res.status(404).json({ message: 'Invalid scanner code.' });
-        }
-
-        // ✅ Check QR Code expiry
-        if (!organization.qrCodeExpires || moment(organization.qrCodeExpires).isBefore(moment())) {
-            await session.abortTransaction();
-            return res.status(400).json({ message: 'QR code has expired. Please scan a new QR code.' });
-        }
-        // ✅ New Validation: Ensure employee belongs to this organization
-        if (!employee.organization.equals(organization._id)) {
-            await session.abortTransaction();
-            return res.status(403).json({ message: 'You are not authorized to clock in/out for this organization.' });
-        }
-
-        // ✅ Check if schedule is assigned
-        if (!employee.schedule) {
-            await session.abortTransaction();
-            return res.status(403).json({ message: 'Any schedule is not assign to you contact with your organization.' });
-        }
-
-        // ✅ Check if today is a working day
-        const currentDayName = moment().tz('Asia/Kolkata').format('dddd');
-        if (!employee.schedule.workingDays.includes(currentDayName)) {
-            await session.abortTransaction();
-            return res.status(403).json({ message: `Today (${currentDayName}) is not a working day according to your schedule.` });
-        }
-
-        // ✅ Check if there's an approved leave for today
-        const startOfDay = moment().tz('Asia/Kolkata').startOf('day').toDate();
-        const endOfDay = moment().tz('Asia/Kolkata').endOf('day').toDate();
-
-        const todayLeave = await Leave.findOne({
-            employee: employee._id,
-            status: 'Approved',
-            startDate: { $lte: endOfDay },
-            endDate: { $gte: startOfDay }
-        }).session(session);
-
-        let isWorkFromHome = false;
-
-        if (todayLeave) {
-            if (todayLeave.leaveType === 'Work From Home') {
-                isWorkFromHome = true;
-            } else {
-                await session.abortTransaction();
-                return res.status(403).json({ message: `You have an approved ${todayLeave.leaveType} for today. You cannot clock in.` });
+        // ✅ GPS Check
+        if (employeeLatitude && employeeLongitude && organization.latitude && organization.longitude && organization.radius) {
+            const distance = haversineDistance(
+                { latitude: employeeLatitude, longitude: employeeLongitude },
+                { latitude: organization.latitude, longitude: organization.longitude }
+            );
+            if (distance > organization.radius) {
+                return res.status(400).json({ message: 'You are outside the allowed radius for clock-in/out.' });
             }
         }
 
-        // ✅ Calculate distance
-        const distance = haversineDistance(
-            { latitude: employeeLatitude, longitude: employeeLongitude },
-            { latitude: organization.location.coordinates[1], longitude: organization.location.coordinates[0] }
-        );
+        const organizationInTime = moment.tz(`${currentDate} ${organization.inTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata').utc().toDate();
+        const organizationOutTime = moment.tz(`${currentDate} ${organization.outTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata').utc().toDate();
 
-        const distanceInMeters = distance * 1000;
+        let shiftStart = moment.tz(`${currentDate} ${organization.inTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata');
+        let shiftEnd = moment.tz(`${currentDate} ${organization.outTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata');
+        if (shiftEnd.isBefore(shiftStart)) shiftEnd.add(1, 'day');
 
-        console.log("Calculated Distance (Meters):", distanceInMeters);
-        console.log("Allowed Radius (Meters):", organization.radius);
-
-        if (!isWorkFromHome && distanceInMeters > organization.radius) {
-            await createNotification(
-                employee._id,
-                organization._id,
-                `${employee.employeeName} attempted to clock-in/out from an unauthorized location (Distance: ${(distanceInMeters).toFixed(0)} meters).`,
-                'LocationAlert',
-                null, // Intentionally null so notification persists despite abortTransaction
-                'Organization'
-            );
-            await session.abortTransaction();
-            return res.status(400).json({ message: 'You are outside the allowed radius for clock-in/out.' });
-        }
-
-        // ✅ Define organization in-time & out-time (Now using employee schedule)
-        const organizationInTime = moment.tz(
-            `${currentDate} ${employee.schedule.inTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata'
-        ).utc().toDate();
-
-        const organizationOutTime = moment.tz(
-            `${currentDate} ${employee.schedule.outTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata'
-        ).utc().toDate();
-
-        console.log("Current Local Time (IST):", moment().tz("Asia/Kolkata").format());
-        console.log("Schedule In-Time (UTC):", organizationInTime);
-        console.log("Schedule Out-Time (UTC):", organizationOutTime);
-
-        // Calculate org shift window
-        let shiftStart = moment.tz(`${currentDate} ${employee.schedule.inTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata');
-        let shiftEnd = moment.tz(`${currentDate} ${employee.schedule.outTime}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata');
-
-        // Handle shifts that span midnight
-        if (shiftEnd.isBefore(shiftStart)) {
-            shiftEnd.add(1, 'day');
-        }
-
-        // Find existing attendance that started within this shift window
-        let attendanceRecord = await Attendance.findOne({
-            employee: employee._id,
-            date: {
-                $gte: shiftStart.startOf('day').toDate(),
-                $lte: shiftEnd.endOf('day').toDate()
+        // Find today's attendance
+        let attendanceRecord = await prisma.attendance.findFirst({
+            where: {
+                employeeId: employee.id,
+                date: {
+                    gte: shiftStart.startOf('day').toDate(),
+                    lte: shiftEnd.endOf('day').toDate()
+                }
             },
-            scannerCode
-        }).session(session);
-
+            include: { sessions: true }
+        });
 
         if (!attendanceRecord) {
-            // ✅ First-time Clock-in
+            // First time clock-in
             const clockInRemark = moment(currentLocalTime).isAfter(moment(organizationInTime)) ? 'Late' : 'Present';
 
-            attendanceRecord = new Attendance({
-                employee: employee._id,
-                employeeName: employee.employeeName,
-                organizationCode: employee.organizationCode,
-                date: currentDate,
-                scannerCode,
-                sessions: [{
-                    clockInTime: currentLocalTime,
-                    clockInRemark
-                }]
+            attendanceRecord = await prisma.attendance.create({
+                data: {
+                    employeeId: employee.id,
+                    employeeName: employee.employeeName,
+                    organizationCode: employee.organizationCode,
+                    date: currentLocalTime,
+                    wifiSSID,
+                    wifiBSSID,
+                    deviceId,
+                    ipAddress,
+                    latitude: employeeLatitude,
+                    longitude: employeeLongitude,
+                    sessions: {
+                        create: {
+                            clockInTime: currentLocalTime,
+                            clockInRemark
+                        }
+                    }
+                },
+                include: { sessions: true }
             });
 
-            await attendanceRecord.save({ session });
-
-            await createNotification(employee._id, organization._id, 'You have successfully clocked in.', 'ClockIn', session, 'Employee');
-
-            await session.commitTransaction();
-            return res.status(200).json({
-                message: 'Clocked in successfully.',
-                employeeName: employee.employeeName,
-                clockInTime: currentLocalTime,
-                clockInRemark
-            });
+            return res.status(200).json({ message: 'Clocked in successfully.', clockInTime: currentLocalTime, clockInRemark });
         }
 
         const lastSession = attendanceRecord.sessions[attendanceRecord.sessions.length - 1];
 
         if (!lastSession.clockOutTime) {
-            // ✅ Clock-out logic
-            lastSession.clockOutTime = currentLocalTime;
-            lastSession.duration = Math.max(0.01, ((currentLocalTime - lastSession.clockInTime) / (1000 * 60 * 60)).toFixed(2));
+            // Clock out
+            const duration = Math.max(0.01, ((currentLocalTime - lastSession.clockInTime) / (1000 * 60 * 60)).toFixed(2));
+            const clockOutRemark = moment(currentLocalTime).isBefore(organizationOutTime) ? 'Left Early' : 'Present';
 
-            // ✅ Calculate total hours and determine final remark
-            attendanceRecord.calculateTotalHoursAndRemark(organizationInTime, organizationOutTime);
-
-            await attendanceRecord.save({ session });
-
-            await createNotification(employee._id, organization._id, 'You have successfully clocked out.', 'ClockOut', session, 'Employee');
-
-            await session.commitTransaction();
-            return res.status(200).json({
-                message: 'Clocked out successfully.',
-                employeeName: attendanceRecord.employeeName,
-                clockOutTime: lastSession.clockOutTime,
-                totalHours: attendanceRecord.totalHours,
-                finalRemark: attendanceRecord.finalRemark
+            await prisma.session.update({
+                where: { id: lastSession.id },
+                data: {
+                    clockOutTime: currentLocalTime,
+                    duration,
+                    clockOutRemark
+                }
             });
+
+            const updatedSessions = await prisma.session.findMany({ where: { attendanceId: attendanceRecord.id } });
+            const totalHours = updatedSessions.reduce((acc, s) => acc + (s.duration || 0), 0);
+            
+            let finalRemark = 'Present';
+            if (totalHours < 4) finalRemark = 'Half Day';
+            else if (clockOutRemark === 'Left Early') finalRemark = 'Left Early';
+
+            await prisma.attendance.update({
+                where: { id: attendanceRecord.id },
+                data: { totalHours, finalRemark }
+            });
+
+            return res.status(200).json({ message: 'Clocked out successfully.', clockOutTime: currentLocalTime, totalHours, finalRemark });
         } else {
-            // ✅ Additional Clock-in
-            attendanceRecord.sessions.push({
-                clockInTime: currentLocalTime,
-                clockInRemark: 'Present' // No "Late" after the first clock-in
+            // Additional Clock-in
+            await prisma.session.create({
+                data: {
+                    attendanceId: attendanceRecord.id,
+                    clockInTime: currentLocalTime,
+                    clockInRemark: 'Present'
+                }
             });
 
-            await attendanceRecord.save({ session });
-
-            await createNotification(employee._id, organization._id, 'You have successfully clocked in again.', 'ClockIn', session, 'Employee');
-
-            await session.commitTransaction();
-            return res.status(200).json({
-                message: 'Clocked in successfully.',
-                employeeName: employee.employeeName,
-                clockInTime: currentLocalTime
-            });
+            return res.status(200).json({ message: 'Clocked in successfully.', clockInTime: currentLocalTime });
         }
     } catch (error) {
-        await session.abortTransaction();
         console.error('Error in /clock-in-out:', error);
         res.status(500).json({ message: 'Internal server error.', error: error.message });
-    } finally {
-        session.endSession();
     }
 });
 

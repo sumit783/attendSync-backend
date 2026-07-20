@@ -1,13 +1,14 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const Employee = require('../models/employee');
-const Organization = require('../models/organization');
 const sendOTPEmail = require('../Handlers/sendEmail');
-const Notification = require('../models/notification'); 
+const prisma = require('../prisma/client');
 const router = express.Router();
 
-const generateOTP = () => Math.floor(1000 + Math.random() * 9000).toString(); // 4-digit OTP
+const generateOTP = () => {
+    if (process.env.NODE_ENV === 'development') return '1234';
+    return Math.floor(1000 + Math.random() * 9000).toString();
+};
 
 router.post('/signup', async (req, res) => {
     try {
@@ -21,48 +22,57 @@ router.post('/signup', async (req, res) => {
             return res.status(400).send({ message: 'Passwords do not match' });
         }
 
-        // Find the organization using organizationCode
-        const organization = await Organization.findOne({ organizationCode });
+        const organization = await prisma.organization.findUnique({
+            where: { organizationCode }
+        });
 
         if (!organization) {
             return res.status(400).send({ message: 'Invalid organization code' });
         }
 
-        const existingEmployee = await Employee.findOne({ employeeEmail });
+        const existingEmployee = await prisma.employee.findUnique({
+            where: { employeeEmail }
+        });
 
         if (existingEmployee) {
             if (existingEmployee.isVerified) {
                 return res.status(400).send({ message: 'Employee already exists' });
             } else {
-                // Update OTP and resend
                 const otp = generateOTP();
-                existingEmployee.otp = otp;
-                existingEmployee.otpExpires = Date.now() + 2 * 60 * 1000;
-                await existingEmployee.save();
+                await prisma.employee.update({
+                    where: { id: existingEmployee.id },
+                    data: {
+                        otp,
+                        otpExpires: new Date(Date.now() + 2 * 60 * 1000)
+                    }
+                });
 
-                sendOTPEmail(employeeEmail, otp, 'Verify your Employee Email Again');
+                if (process.env.NODE_ENV !== 'development') {
+                    sendOTPEmail(employeeEmail, otp, 'Verify your Employee Email Again');
+                }
                 return res.status(200).send({ message: 'Unverified account found. OTP resent.' });
             }
         }
 
-
         const otp = generateOTP();
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Save Employee with organization ID reference
-        const newEmployee = new Employee({
-            employeeName,
-            employeeEmail,
-            password: hashedPassword,
-            organization: organization._id, // Assign the actual organization reference
-            isVerified: false, // Mark as unverified
-            otp,
-            otpExpires: Date.now() + 2 * 60 * 1000, // OTP valid for 2 minutes
+        const newEmployee = await prisma.employee.create({
+            data: {
+                employeeName,
+                employeeEmail,
+                password: hashedPassword,
+                organizationId: organization.id,
+                organizationCode,
+                isVerified: false,
+                otp,
+                otpExpires: new Date(Date.now() + 2 * 60 * 1000),
+            }
         });
 
-        await newEmployee.save();
-        sendOTPEmail(employeeEmail, otp, 'Verify your Employee Email');
-
+        if (process.env.NODE_ENV !== 'development') {
+            sendOTPEmail(employeeEmail, otp, 'Verify your Employee Email');
+        }
         res.status(201).send({ message: 'Employee created. Please verify your email.' });
 
     } catch (error) {
@@ -72,83 +82,95 @@ router.post('/signup', async (req, res) => {
 });
 
 router.post('/login', async (req, res) => {
-    const { email, password } = req.body;
+    try {
+        const { email, password, deviceId, deviceModel, manufacturer, platform, osVersion } = req.body;
 
-    const user = await Employee.findOne({ employeeEmail: email }) || await Organization.findOne({ organizationEmail: email });
+        const employee = await prisma.employee.findUnique({ where: { employeeEmail: email }, include: { organization: true, devices: { where: { status: 'ACTIVE' } } } });
+        
+        let userType = 'Employee';
+        let user = employee;
 
-    if (!user) {
-        return res.status(400).send({ message: 'Invalid email or password' });
+        if (!user) {
+            const org = await prisma.organization.findUnique({ where: { organizationEmail: email } });
+            if (org) {
+                user = org;
+                userType = 'Organization';
+            }
+        }
+
+        if (!user) return res.status(400).send({ message: 'Invalid email or password' });
+        
+        if (!user.isVerified) return res.status(400).send({ message: 'Email is not verified. Please verify your email to log in.' });
+
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) return res.status(400).send({ message: 'Invalid email or password' });
+
+        if (userType === 'Employee' && deviceId) {
+            if (user.devices.length === 0) {
+                // Register Device
+                await prisma.employeeDevice.create({
+                    data: {
+                        employeeId: user.id,
+                        uuid: deviceId,
+                        model: deviceModel || 'Unknown',
+                        manufacturer: manufacturer || 'Unknown',
+                        platform: platform || 'Unknown',
+                        osVersion: osVersion || 'Unknown',
+                        status: 'ACTIVE'
+                    }
+                });
+            } else if (user.devices[0].uuid !== deviceId) {
+                return res.status(403).send({ message: 'Unauthorized device. Please contact your admin to reset your device.' });
+            }
+        }
+
+        const token = jwt.sign({ id: user.id, email: user.email || user.organizationEmail }, process.env.JWT_SECRET, { expiresIn: '60d' });
+
+        res.status(200).send({
+            message: `${userType} login successful`,
+            id: user.id,
+            token,
+            organizationCode: user.organizationCode || null,
+            employee: userType === 'Employee' ? user : undefined,
+            organization: userType === 'Organization' ? user : undefined
+        });
+    } catch(err) {
+        console.error('Error in login:', err);
+        res.status(500).send({ message: 'Internal Server Error' });
     }
-
-    if (!user.isVerified) {
-        return res.status(400).send({ message: 'Email is not verified. Please verify your email to log in.' });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-        return res.status(400).send({ message: 'Invalid email or password' });
-    }
-
-    const userType = user.employeeEmail ? 'Employee' : 'Organization';
-
-    let finalUser = user;
-    if (userType === 'Employee') {
-        finalUser = await Employee.findById(user._id).populate('organization');
-    }
-
-    const token = jwt.sign({ id: user._id, email: user.email || user.organizationEmail }, process.env.JWT_SECRET, { expiresIn: '60d' });
-
-    res.status(200).send({
-        message: `${userType} login successful`,
-        id: user._id,
-        token,
-        organizationCode: user.organizationCode || null,
-        employee: userType === 'Employee' ? finalUser : undefined,
-        organization: userType === 'Organization' ? finalUser : undefined
-    });
 });
 
 router.post('/verify-otp', async (req, res) => {
     try {
         const { email, otp, action } = req.body;
 
-        const user = await Employee.findOne({ employeeEmail: email }) ||
-            await Organization.findOne({ organizationEmail: email });
+        const employee = await prisma.employee.findUnique({ where: { employeeEmail: email } });
+        const org = await prisma.organization.findUnique({ where: { organizationEmail: email } });
 
-        if (!user) {
-            return res.status(400).send({ message: 'User not found' });
-        }
+        const user = employee || org;
 
-        if (user.otp !== otp || user.otpExpires < Date.now()) {
+        if (!user) return res.status(400).send({ message: 'User not found' });
+
+        if (user.otp !== otp || user.otpExpires < new Date()) {
             return res.status(400).send({ message: 'Invalid or expired OTP.' });
         }
 
         if (action === 'verify-email') {
-            // Mark user as verified
-            user.isVerified = true;
-
-            // If user is an Employee, assign organizationId and organizationCode
-            if (user.employeeEmail) {
-                const organization = await Organization.findById(user.organization);
-
-                if (!organization) {
-                    return res.status(400).send({ message: 'Organization not found.' });
-                }
-
-                user.organizationCode = organization.organizationCode;
-
-                // 🔥 Increment employee count
-                organization.employeeCount += 1;
-                await organization.save();
-                // ✅ Add notification to organization that employee has joined
-                const notification = new Notification({
-                    user: organization._id, // Not actually used by org for filtering, but kept for consistency
-                    organization: organization._id,
-                    message: `${user.employeeName} has joined your organization.`,
-                    type: 'Join', // or you can create a new type like 'Join', up to your enum
-                    target: 'Organization'
+            if (employee) {
+                await prisma.employee.update({
+                    where: { id: user.id },
+                    data: { isVerified: true, otp: null, otpExpires: null }
                 });
-                await notification.save();
+                
+                await prisma.organization.update({
+                    where: { id: user.organizationId },
+                    data: { employeeCount: { increment: 1 } }
+                });
+            } else {
+                await prisma.organization.update({
+                    where: { id: user.id },
+                    data: { isVerified: true, otp: null, otpExpires: null }
+                });
             }
         }
         else if (action === 'forgot-password') {
@@ -157,11 +179,6 @@ router.post('/verify-otp', async (req, res) => {
             return res.status(400).send({ message: 'Invalid action specified.' });
         }
 
-        // Clear OTP fields after verification
-        user.otp = undefined;
-        user.otpExpires = undefined;
-
-        await user.save();
         res.status(200).send({ message: 'Email verified successfully.', organizationCode: user.organizationCode });
 
     } catch (error) {
@@ -171,36 +188,49 @@ router.post('/verify-otp', async (req, res) => {
 });
 
 
-// ================== Forgot & Reset Password ==================
 router.post('/forgot-password', async (req, res) => {
-    const { email } = req.body;
-    const user = await Employee.findOne({ employeeEmail: email });
-
-    if (!user) return res.status(400).send({ message: 'User not found' });
-
-    const otp = generateOTP();
-    user.otp = otp;
-    user.otpExpires = Date.now() + 2 * 60 * 1000;
-    await user.save();
-
-    sendOTPEmail(email, otp, 'Password Reset OTP');
-    res.status(200).send({ message: 'Password reset OTP sent to email.' });
+    try {
+        const { email } = req.body;
+        const user = await prisma.employee.findUnique({ where: { employeeEmail: email } });
+    
+        if (!user) return res.status(400).send({ message: 'User not found' });
+    
+        const otp = generateOTP();
+        await prisma.employee.update({
+            where: { id: user.id },
+            data: { otp, otpExpires: new Date(Date.now() + 2 * 60 * 1000) }
+        });
+    
+        if (process.env.NODE_ENV !== 'development') {
+            sendOTPEmail(email, otp, 'Password Reset OTP');
+        }
+        res.status(200).send({ message: 'Password reset OTP sent to email.' });
+    } catch(err) {
+        console.error(err);
+        res.status(500).send({ message: 'Internal Server Error' });
+    }
 });
 
 router.post('/reset-password', async (req, res) => {
-    const { email, otp, newPassword } = req.body;
-    const user = await Employee.findOne({ employeeEmail: email });
-
-    if (!user || user.otp !== otp || user.otpExpires < Date.now()) {
-        return res.status(400).send({ message: 'Invalid or expired OTP.' });
+    try {
+        const { email, otp, newPassword } = req.body;
+        const user = await prisma.employee.findUnique({ where: { employeeEmail: email } });
+    
+        if (!user || user.otp !== otp || user.otpExpires < new Date()) {
+            return res.status(400).send({ message: 'Invalid or expired OTP.' });
+        }
+    
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await prisma.employee.update({
+            where: { id: user.id },
+            data: { password: hashedPassword, otp: null, otpExpires: null }
+        });
+    
+        res.status(200).send({ message: 'Password reset successfully.' });
+    } catch(err) {
+        console.error(err);
+        res.status(500).send({ message: 'Internal Server Error' });
     }
-
-    user.password = await bcrypt.hash(newPassword, 10);
-    user.otp = undefined;
-    user.otpExpires = undefined;
-    await user.save();
-
-    res.status(200).send({ message: 'Password reset successfully.' });
 });
 
 module.exports = router;

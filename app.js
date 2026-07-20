@@ -3,8 +3,6 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const mongoSanitize = require('./middleware/mongoSanitize');
-const xss = require('xss-clean');
 const hpp = require('hpp');
 const compression = require('compression');
 const morgan = require('morgan');
@@ -20,13 +18,9 @@ const employeeAuth = require('./routes/employeeAuth');
 const leavesRoutes = require('./routes/leaveRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const orgNotificationRoutes = require('./routes/organizationNotification');
-const scheduleRoutes = require('./routes/scheduleRoutes');
-if (process.env.NODE_ENV !== 'test') {
-  const AbsenceMarker = require('./Handlers/AbsenceHandlers');
-  AbsenceMarker();
-  // Import the cron jobs so they start running
-  require('./Handlers/cronJobs'); // ✅ This will execute and schedule your cron jobs
-}
+// const AbsenceMarker = require('./Handlers/AbsenceHandlers');
+// Import the cron jobs so they start running
+require('./Handlers/cronJobs'); // ✅ This will execute and schedule your cron jobs
 
 process.env.TZ = "Asia/Kolkata";
 
@@ -50,12 +44,13 @@ if (process.env.NODE_ENV === 'development') {
 const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim()) : ['http://localhost:3000', 'http://localhost:8000', 'http://localhost:8081'];
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.some(o => origin.startsWith(o)) || origin.startsWith('http://localhost')) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
     }
-  }
+  },
+  credentials: true
 }));
 
 // Rate limiting
@@ -80,17 +75,16 @@ app.use(express.json({
   }
 }));
 
-// Data sanitization against NoSQL query injection
-app.use(mongoSanitize());
-
 // Data sanitization against XSS
-app.use(xss());
+// app.use(xss()); // Incompatible with Express 5 (req.query is read-only)
 
 // Prevent parameter pollution
 app.use(hpp());
 
 // Compress responses
 app.use(compression());
+
+// AbsenceMarker();
 
 // Routes
 app.use('/api/organization', organizationAuth);
@@ -101,7 +95,6 @@ app.use('/api/employee', employeeAuth);
 app.use('/api/leave', leavesRoutes);
 app.use('/api/notification', notificationRoutes);
 app.use('/api/notification', orgNotificationRoutes);
-app.use('/api/organization/schedule', scheduleRoutes);
 
 app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
 
