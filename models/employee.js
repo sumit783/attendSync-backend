@@ -13,6 +13,7 @@ const employeeSchema = new mongoose.Schema({
     otpExpires: { type: Date },
     status: { type: String, enum: ['active', 'inactive'], default: 'active' },
     lastLogin: { type: Date }, // Added field
+    schedule: { type: mongoose.Schema.Types.ObjectId, ref: 'Schedule' }, // Optional specific schedule
     attendanceRecords: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Attendance' }], // Attendance tracking
   });
   
