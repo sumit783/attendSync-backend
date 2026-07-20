@@ -1,5 +1,4 @@
-const Organization = require('../models/organization');
-const Employee = require('../models/employee');
+const prisma = require('../prisma/client');
 
 exports.uploadProfilePic = async (req, res) => {
     const organizationId = req.user.id;
@@ -9,47 +8,47 @@ exports.uploadProfilePic = async (req, res) => {
     }
 
     try {
-        const organization = await Organization.findById(organizationId);
-        if (!organization) {
-            return res.status(404).send({ message: 'Organization not found' });
-        }
-
-        organization.organizationProfilePic = req.file.path.replace(/\\/g, '/'); // Save path to DB
-        await organization.save();
+        const organization = await prisma.organization.update({
+            where: { id: organizationId },
+            data: { organizationProfilePic: req.file.path.replace(/\\/g, '/') }
+        });
 
         res.status(200).send({
             message: 'Profile picture uploaded successfully',
             profilePic: organization.organizationProfilePic,
         });
     } catch (error) {
-        res.status(500).send({ message: 'Internal Server Error', error });
+        if (error.code === 'P2025') {
+            return res.status(404).send({ message: 'Organization not found' });
+        }
+        res.status(500).send({ message: 'Internal Server Error', error: error.message });
     }
 };
 
 exports.setLocation = async (req, res) => {
     const { latitude, longitude, radius } = req.body;
-    const organizationId = req.user.id; // Extracting organization ID from auth token
+    const organizationId = req.user.id;
 
     if (latitude == null || longitude == null || radius == null) {
         return res.status(400).send({ message: 'All fields (latitude, longitude, radius) are required' });
     }
 
     try {
-        const organization = await Organization.findById(organizationId);
-        if (!organization) {
-            return res.status(404).send({ message: 'Organization not found' });
-        }
+        const organization = await prisma.organization.update({
+            where: { id: organizationId },
+            data: {
+                latitude: parseFloat(latitude),
+                longitude: parseFloat(longitude),
+                radius: parseFloat(radius)
+            }
+        });
 
-        organization.location = {
-            type: 'Point',
-            coordinates: [longitude, latitude], // GeoJSON format
-        };
-        organization.radius = radius;
-
-        await organization.save();
         res.status(200).send({ message: 'Location and radius set successfully', organization });
     } catch (error) {
-        res.status(500).send({ message: 'Internal Server Error', error });
+        if (error.code === 'P2025') {
+            return res.status(404).send({ message: 'Organization not found' });
+        }
+        res.status(500).send({ message: 'Internal Server Error', error: error.message });
     }
 };
 
@@ -57,26 +56,27 @@ exports.setTime = async (req, res) => {
     const { inTime, outTime, workingDays } = req.body;
     const organizationId = req.user.id;
 
-    if (!organizationId || !inTime || !outTime) {
-        return res.status(400).send({ message: 'All fields (organizationId, inTime, outTime) are required' });
+    if (!inTime || !outTime) {
+        return res.status(400).send({ message: 'inTime and outTime are required' });
     }
 
     try {
-        const organization = await Organization.findById(organizationId);
-        if (!organization) {
-            return res.status(404).send({ message: 'Organization not found' });
-        }
-
-        organization.inTime = inTime;
-        organization.outTime = outTime;
+        const data = { inTime, outTime };
         if (workingDays && Array.isArray(workingDays)) {
-            organization.workingDays = workingDays;
+            data.workingDays = workingDays;
         }
 
-        await organization.save();
+        const organization = await prisma.organization.update({
+            where: { id: organizationId },
+            data
+        });
+
         res.status(200).send({ message: 'In-Time and Out-Time set successfully', organization });
     } catch (error) {
-        res.status(500).send({ message: 'Internal Server Error', error });
+        if (error.code === 'P2025') {
+            return res.status(404).send({ message: 'Organization not found' });
+        }
+        res.status(500).send({ message: 'Internal Server Error', error: error.message });
     }
 };
 
@@ -84,76 +84,29 @@ exports.getDetails = async (req, res) => {
     const { organizationId } = req.params;
 
     try {
-        const organization = await Organization.findById(organizationId);
+        const organization = await prisma.organization.findUnique({
+            where: { id: organizationId }
+        });
+
         if (!organization) {
             return res.status(404).send({ message: 'Organization not found' });
         }
 
-        // Count employees linked to this organization
-        const employeeCount = await Employee.countDocuments({ organizationCode: organization.organizationCode });
+        const employeeCount = await prisma.employee.count({
+            where: { organizationCode: organization.organizationCode }
+        });
 
         res.status(200).send({
             organization,
-            employeeCount, // Include employee count in response
+            employeeCount,
         });
     } catch (error) {
-        res.status(500).send({ message: 'Internal Server Error', error });
+        res.status(500).send({ message: 'Internal Server Error', error: error.message });
     }
 };
 
-exports.updateLocation = async (req, res) => {
-    const { latitude, longitude, radius } = req.body;
-    const organizationId = req.user.id; // Extracting organization ID from auth token
-
-    if (latitude == null || longitude == null || radius == null) {
-        return res.status(400).send({ message: 'All fields (latitude, longitude, radius) are required' });
-    }
-
-    try {
-        const organization = await Organization.findById(organizationId);
-        if (!organization) {
-            return res.status(404).send({ message: 'Organization not found' });
-        }
-
-        organization.location = {
-            type: 'Point',
-            coordinates: [longitude, latitude], // GeoJSON format
-        };
-        organization.radius = radius;
-
-        await organization.save();
-        res.status(200).send({ message: 'Location and radius updated successfully', organization });
-    } catch (error) {
-        res.status(500).send({ message: 'Internal Server Error', error });
-    }
-};
-
-exports.updateTime = async (req, res) => {
-    const { inTime, outTime, workingDays } = req.body;
-    const organizationId = req.user.id;
-
-    if (!organizationId || !inTime || !outTime) {
-        return res.status(400).send({ message: 'All fields (organizationId, inTime, outTime) are required' });
-    }
-
-    try {
-        const organization = await Organization.findById(organizationId);
-        if (!organization) {
-            return res.status(404).send({ message: 'Organization not found' });
-        }
-
-        organization.inTime = inTime;
-        organization.outTime = outTime;
-        if (workingDays && Array.isArray(workingDays)) {
-            organization.workingDays = workingDays;
-        }
-
-        await organization.save();
-        res.status(200).send({ message: 'In-Time and Out-Time updated successfully', organization });
-    } catch (error) {
-        res.status(500).send({ message: 'Internal Server Error', error });
-    }
-};
+exports.updateLocation = exports.setLocation;
+exports.updateTime = exports.setTime;
 
 exports.updateDetails = async (req, res) => {
     const { organizationId, name, address, contactNumber, profilePic } = req.body;
@@ -163,23 +116,22 @@ exports.updateDetails = async (req, res) => {
     }
 
     try {
-        const organization = await Organization.findById(organizationId);
-        if (!organization) {
-            return res.status(404).send({ message: 'Organization not found' });
-        }
-
-        organization.name = name;
-        organization.address = address;
-        organization.contactNumber = contactNumber;
-
+        const data = { name, address, contactNumber };
         if (profilePic) {
-            organization.organizationProfilePic = profilePic; // Optional: only update if provided
+            data.organizationProfilePic = profilePic;
         }
 
-        await organization.save();
+        const organization = await prisma.organization.update({
+            where: { id: organizationId },
+            data
+        });
+
         res.status(200).send({ message: 'Organization details updated successfully', organization });
     } catch (error) {
-        res.status(500).send({ message: 'Internal Server Error', error });
+        if (error.code === 'P2025') {
+            return res.status(404).send({ message: 'Organization not found' });
+        }
+        res.status(500).send({ message: 'Internal Server Error', error: error.message });
     }
 };
 
@@ -192,39 +144,18 @@ exports.setWorkingDays = async (req, res) => {
     }
 
     try {
-        const organization = await Organization.findById(organizationId);
-        if (!organization) {
-            return res.status(404).send({ message: 'Organization not found' });
-        }
-
-        organization.workingDays = workingDays;
-        await organization.save();
+        const organization = await prisma.organization.update({
+            where: { id: organizationId },
+            data: { workingDays }
+        });
         
         res.status(200).send({ message: 'Working days set successfully', organization });
     } catch (error) {
-        res.status(500).send({ message: 'Internal Server Error', error });
-    }
-};
-
-exports.updateWorkingDays = async (req, res) => {
-    const { workingDays } = req.body;
-    const organizationId = req.user.id;
-
-    if (!workingDays || !Array.isArray(workingDays)) {
-        return res.status(400).send({ message: 'workingDays array is required' });
-    }
-
-    try {
-        const organization = await Organization.findById(organizationId);
-        if (!organization) {
+        if (error.code === 'P2025') {
             return res.status(404).send({ message: 'Organization not found' });
         }
-
-        organization.workingDays = workingDays;
-        await organization.save();
-        
-        res.status(200).send({ message: 'Working days updated successfully', organization });
-    } catch (error) {
-        res.status(500).send({ message: 'Internal Server Error', error });
+        res.status(500).send({ message: 'Internal Server Error', error: error.message });
     }
 };
+
+exports.updateWorkingDays = exports.setWorkingDays;
