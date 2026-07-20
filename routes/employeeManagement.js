@@ -186,8 +186,9 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
     try {
         const employeeId = req.user.id;
 
-        // Step 1: Get employee and their org code
-        const employee = await Employee.findById(employeeId);
+        const employee = await prisma.employee.findUnique({
+            where: { id: employeeId }
+        });
         if (!employee) {
             return res.status(404).json({ message: 'Employee not found.' });
         }
@@ -195,16 +196,20 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
         const organizationCode = employee.organizationCode;
 
         // Step 2: Fetch all attendance records
-        const attendances = await Attendance.find({
-            employee: employeeId,
-            organizationCode
+        const attendances = await prisma.attendance.findMany({
+            where: {
+                employeeId: employeeId,
+                organizationCode: organizationCode
+            }
         });
 
         // Step 3: Fetch all approved leave records
-        const leaves = await Leave.find({
-            employee: employeeId,
-            organizationCode,
-            status: 'Approved'
+        const leaves = await prisma.leave.findMany({
+            where: {
+                employeeId: employeeId,
+                organizationCode: organizationCode,
+                status: 'Approved'
+            }
         });
         //console.log(leaves)
 
@@ -264,16 +269,22 @@ router.get('/all-present-days', authenticateJWT, async (req, res) => {
         }
 
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const employee = await Employee.findById(decoded.id);
+        const employee = await prisma.employee.findUnique({
+            where: { id: decoded.id }
+        });
         if (!employee) {
             return res.status(404).json({ message: 'Employee not found.' });
         }
 
         // Fetch all records where the employee was present (finalRemark is NOT 'Absent')
-        const presentDays = await Attendance.find({
-            employee: employee._id,
-            finalRemark: { $ne: 'Absent' } // Fetches only present days
-        }).sort({ date: 1 }).select('date finalRemark');
+        const presentDays = await prisma.attendance.findMany({
+            where: {
+                employeeId: employee.id,
+                finalRemark: { not: 'Absent' } // Fetches only present days
+            },
+            orderBy: { date: 'asc' },
+            select: { date: true, finalRemark: true }
+        });
 
         res.status(200).json({ presentDays });
     } catch (error) {
@@ -294,7 +305,10 @@ router.get('/profile', authenticateJWT, async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         // Fetch the employee by ID with populated organization details
-        const employeeInstance = await Employee.findById(decoded.id).populate('organization');
+        const employeeInstance = await prisma.employee.findUnique({
+            where: { id: decoded.id },
+            include: { organization: true }
+        });
         if (!employeeInstance) {
             return res.status(404).send({ message: 'Employee not found' });
         }
@@ -302,7 +316,7 @@ router.get('/profile', authenticateJWT, async (req, res) => {
         // Send the employee profile as a response
         res.status(200).json({
             message: 'Employee profile fetched successfully',
-            id: employeeInstance._id,
+            id: employeeInstance.id,
             employeeName: employeeInstance.employeeName,
             employeeEmail: employeeInstance.employeeEmail,
             organizationCode: employeeInstance.organizationCode,
@@ -335,7 +349,9 @@ router.post('/upload-profile-pic', authenticateJWT, upload.single('profilePic'),
         const token = authHeader.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         // Find the employee by ID
-        const employeeInstance = await Employee.findById(decoded.id);
+        const employeeInstance = await prisma.employee.findUnique({
+            where: { id: decoded.id }
+        });
         console.log(decoded.id)
         if (!employeeInstance) {
             return res.status(404).send({ message: 'Employee not found' });
@@ -348,8 +364,10 @@ router.post('/upload-profile-pic', authenticateJWT, upload.single('profilePic'),
 
         // Save the file path to the employee's profile
         const filePath = req.file.path.replace(/\\/g, '/'); // Local path to the file
-        employeeInstance.profilePic = filePath;
-        await employeeInstance.save();
+        await prisma.employee.update({
+            where: { id: employeeInstance.id },
+            data: { profilePic: filePath }
+        });
 
         res.status(200).json({
             message: 'Profile picture uploaded successfully',
@@ -377,7 +395,9 @@ router.get('/attendance/today', authenticateJWT, async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         // Find the employee
-        const employee = await Employee.findById(decoded.id);
+        const employee = await prisma.employee.findUnique({
+            where: { id: decoded.id }
+        });
         if (!employee) {
             return res.status(404).json({ message: 'Employee not found.' });
         }
@@ -387,9 +407,12 @@ router.get('/attendance/today', authenticateJWT, async (req, res) => {
         const endOfDay = moment().endOf('day').toDate();
 
         // Fetch today's attendance record
-        const attendanceRecord = await Attendance.findOne({
-            employee: employee._id,
-            date: { $gte: startOfDay, $lte: endOfDay },
+        const attendanceRecord = await prisma.attendance.findFirst({
+            where: {
+                employeeId: employee.id,
+                date: { gte: startOfDay, lte: endOfDay }
+            },
+            include: { sessions: true }
         });
 
         if (!attendanceRecord) {
@@ -450,15 +473,27 @@ router.get('/attendance/present-nearby', authenticateJWT, async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         // Find the requesting employee
-        const requestingEmployee = await Employee.findById(decoded.id);
+        const requestingEmployee = await prisma.employee.findUnique({
+            where: { id: decoded.id }
+        });
         if (!requestingEmployee) {
             return res.status(404).json({ message: 'Employee not found.' });
         }
 
+        const startOfDay = moment().startOf('day').toDate();
+        const endOfDay = moment().endOf('day').toDate();
+
         // Fetch attendances where clockInTime exists
-        const presentEmployees = await Attendance.find({
-            'sessions.clockInTime': { $exists: true }
-        }).populate('employee', 'employeeName profilePic');
+        const presentEmployees = await prisma.attendance.findMany({
+            where: {
+                organizationCode: requestingEmployee.organizationCode,
+                date: { gte: startOfDay, lte: endOfDay },
+                sessions: {
+                    some: {}
+                }
+            },
+            include: { employee: true }
+        });
 
         if (!presentEmployees.length) {
             return res.status(200).json({
@@ -471,7 +506,7 @@ router.get('/attendance/present-nearby', authenticateJWT, async (req, res) => {
         const uniqueMap = new Map();
         presentEmployees.forEach(record => {
             const emp = record.employee;
-            const empId = emp?._id?.toString();
+            const empId = emp?.id;
             if (
                 empId &&
                 !uniqueMap.has(empId) &&
@@ -505,7 +540,9 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         // Find the employee
-        const employee = await Employee.findById(decoded.id);
+        const employee = await prisma.employee.findUnique({
+            where: { id: decoded.id }
+        });
         if (!employee) {
             return res.status(404).json({ message: 'Employee not found.' });
         }
@@ -516,9 +553,12 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
         const endOfDay = moment(selectedDate).endOf('day').toDate();
 
         // Fetch attendance record for the selected date
-        const attendanceRecord = await Attendance.findOne({
-            employee: employee._id,
-            date: { $gte: startOfDay, $lte: endOfDay },
+        const attendanceRecord = await prisma.attendance.findFirst({
+            where: {
+                employeeId: employee.id,
+                date: { gte: startOfDay, lte: endOfDay }
+            },
+            include: { sessions: true }
         });
 
         if (!attendanceRecord) {
