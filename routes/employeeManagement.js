@@ -74,7 +74,7 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
         if (organization.wifiSSID && organization.wifiSSID !== wifiSSID) {
             return res.status(400).json({ message: `Wrong Wi-Fi. Please connect to ${organization.wifiSSID}.` });
         }
-        if (organization.wifiBSSID && organization.wifiBSSID !== wifiBSSID) {
+        if (organization.wifiBSSID && (!wifiBSSID || organization.wifiBSSID.toLowerCase() !== wifiBSSID.toLowerCase())) {
             return res.status(400).json({ message: 'Wi-Fi BSSID mismatch.' });
         }
 
