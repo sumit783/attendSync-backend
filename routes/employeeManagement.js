@@ -74,8 +74,8 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
         if (organization.wifiSSID && organization.wifiSSID !== wifiSSID) {
             return res.status(400).json({ message: `Wrong Wi-Fi. Please connect to ${organization.wifiSSID}.` });
         }
-        if (organization.wifiBSSID && (!wifiBSSID || organization.wifiBSSID.toLowerCase() !== wifiBSSID.toLowerCase())) {
-            return res.status(400).json({ message: 'Wi-Fi BSSID mismatch.' });
+        if (organization.wifiBSSID && wifiBSSID && wifiBSSID !== '02:00:00:00:00:00' && organization.wifiBSSID.toLowerCase() !== wifiBSSID.toLowerCase()) {
+            return res.status(400).json({ message: `Wi-Fi BSSID mismatch. Expected: ${organization.wifiBSSID}, Got: ${wifiBSSID}` });
         }
 
         // ✅ GPS Check
