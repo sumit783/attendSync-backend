@@ -50,7 +50,7 @@ function parseTime(time) {
 
 router.post('/clock-in-out', authenticateJWT, async (req, res) => {
     try {
-        const { wifiSSID, wifiBSSID, deviceId, ipAddress, employeeLatitude, employeeLongitude } = req.body;
+        const { wifiSSID, wifiBSSID, deviceId, ipAddress, employeeLatitude, employeeLongitude, isIOS } = req.body;
         const currentDate = moment().tz('Asia/Kolkata').format('YYYY-MM-DD');
         const currentLocalTime = moment().tz('Asia/Kolkata').toDate();
 
@@ -70,12 +70,14 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
 
         const organization = employee.organization;
 
-        // ✅ Check WiFi
-        if (organization.wifiSSID && organization.wifiSSID !== wifiSSID) {
-            return res.status(400).json({ message: `Wrong Wi-Fi. Please connect to ${organization.wifiSSID}.` });
-        }
-        if (organization.wifiBSSID && wifiBSSID && wifiBSSID !== '02:00:00:00:00:00' && organization.wifiBSSID.toLowerCase() !== wifiBSSID.toLowerCase()) {
-            return res.status(400).json({ message: `Wi-Fi BSSID mismatch. Expected: ${organization.wifiBSSID}, Got: ${wifiBSSID}` });
+        // ✅ Check WiFi (Skip for iOS, rely on GPS)
+        if (!isIOS) {
+            if (organization.wifiSSID && organization.wifiSSID !== wifiSSID) {
+                return res.status(400).json({ message: `Wrong Wi-Fi. Please connect to ${organization.wifiSSID}.` });
+            }
+            if (organization.wifiBSSID && wifiBSSID && wifiBSSID !== '02:00:00:00:00:00' && organization.wifiBSSID.toLowerCase() !== wifiBSSID.toLowerCase()) {
+                return res.status(400).json({ message: `Wi-Fi BSSID mismatch. Expected: ${organization.wifiBSSID}, Got: ${wifiBSSID}` });
+            }
         }
 
         // ✅ GPS Check
