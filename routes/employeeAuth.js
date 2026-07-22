@@ -107,9 +107,17 @@ router.post('/login', async (req, res) => {
 
         if (userType === 'Employee' && deviceId) {
             if (user.devices.length === 0) {
-                // Register Device
-                await prisma.employeeDevice.create({
-                    data: {
+                // Register Device (upsert to handle previously revoked devices)
+                await prisma.employeeDevice.upsert({
+                    where: { uuid: deviceId },
+                    update: {
+                        employeeId: user.id,
+                        model: deviceModel || 'Unknown',
+                        manufacturer: manufacturer || 'Unknown',
+                        androidVersion: osVersion || 'Unknown',
+                        status: 'ACTIVE'
+                    },
+                    create: {
                         employeeId: user.id,
                         uuid: deviceId,
                         model: deviceModel || 'Unknown',
