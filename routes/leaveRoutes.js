@@ -93,13 +93,14 @@ router.post('/employee/leave-request', authenticateJWT, async (req, res) => {
             return res.status(400).send({ message: 'A leave request already exists for the selected dates.' });
         }
 
+        const mappedLeaveType = leaveType.replace(/ /g, '_');
+
         const newLeaveRequest = await prisma.leave.create({
             data: {
-                employeeProfilePic: employee.profilePic,
                 organizationCode: employee.organizationCode,
                 employeeId: employee.id,
                 employeeName: employee.employeeName,
-                leaveType,
+                leaveType: mappedLeaveType,
                 startDate: start,
                 endDate: end,
                 reason,
@@ -130,7 +131,7 @@ router.post('/employee/leave-request', authenticateJWT, async (req, res) => {
 
 // ================== Leave Approval/Rejection (Admin) ==================
 router.post('/organization/leave-approval', authenticateJWT, async (req, res) => {
-    const { leaveId, status } = req.body; 
+    const { leaveId, status, reason } = req.body; 
 
     if (!['Approved', 'Rejected'].includes(status)) {
         return res.status(400).send({ message: 'Invalid status. Allowed values are Approved or Rejected.' });
@@ -168,11 +169,16 @@ router.post('/organization/leave-approval', authenticateJWT, async (req, res) =>
             data: { status }
         });
 
+        let messageText = `Your leave request from ${leave.startDate.toDateString()} to ${leave.endDate.toDateString()} has been ${status.toLowerCase()}.`;
+        if (status === 'Rejected' && reason) {
+            messageText += ` Reason: ${reason}`;
+        }
+
         await prisma.notification.create({
             data: {
                 userId: leave.employeeId,
                 organizationId: organization.id, 
-                message: `Your leave request from ${leave.startDate.toDateString()} to ${leave.endDate.toDateString()} has been ${status.toLowerCase()}.`,
+                message: messageText,
                 type: 'LeaveApproval',
                 target: 'Employee',
                 isRead: false

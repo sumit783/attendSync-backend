@@ -171,6 +171,7 @@ enum LeaveType {
   Vacation_Leave @map("Vacation Leave")
   Paid_Leave     @map("Paid Leave")
   Unpaid_Leave   @map("Unpaid Leave")
+  Work_From_Home @map("Work From Home")
 }
 
 enum LeaveStatus {

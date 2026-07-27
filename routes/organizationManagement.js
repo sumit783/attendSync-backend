@@ -451,9 +451,25 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
+    const { startDate, endDate } = req.query;
+    
+    let dateFilter = {};
+    if (startDate || endDate) {
+      dateFilter = {};
+      if (startDate) {
+        dateFilter.gte = new Date(startDate);
+      }
+      if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        dateFilter.lte = end;
+      }
+    }
+
     const attendances = await prisma.attendance.findMany({
       where: {
-        organizationCode: organization.organizationCode
+        organizationCode: organization.organizationCode,
+        ...(Object.keys(dateFilter).length > 0 && { date: dateFilter })
       },
       include: {
         sessions: {
