@@ -133,6 +133,7 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
                     ipAddress,
                     latitude: employeeLatitude,
                     longitude: employeeLongitude,
+                    finalRemark: 'Clocked In',
                     sessions: {
                         create: {
                             clockInTime: currentLocalTime,
@@ -143,7 +144,7 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
                 include: { sessions: true }
             });
 
-            return res.status(200).json({ message: 'Clocked in successfully.', clockInTime: currentLocalTime, clockInRemark });
+            return res.status(200).json({ message: 'Clocked in successfully.', clockInTime: currentLocalTime, clockInRemark, finalRemark: 'Clocked In' });
         }
 
         const lastSession = attendanceRecord.sessions[attendanceRecord.sessions.length - 1];
@@ -263,7 +264,7 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
         };
 
         allDates.forEach(date => {
-            if (['Present', 'Half Day', 'Left Early'].includes(attendanceMap[date])) {
+            if (['Present', 'Half Day', 'Left Early', 'Clocked In'].includes(attendanceMap[date])) {
                 result.presentDates.push(date);
             } else if (leaveDates.has(date)) {
                 result.leaveDates.push(date);
