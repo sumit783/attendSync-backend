@@ -482,6 +482,23 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
       orderBy: { date: 'desc' }
     });
 
+    const formatHoursToHHMM = (decimalHours) => {
+      if (!decimalHours) return '00:00';
+      const isNegative = decimalHours < 0;
+      const absHours = Math.abs(decimalHours);
+      const hours = Math.floor(absHours);
+      const minutes = Math.round((absHours - hours) * 60);
+      let adjustedHours = hours;
+      let adjustedMinutes = minutes;
+      if (minutes === 60) {
+        adjustedHours += 1;
+        adjustedMinutes = 0;
+      }
+      const formattedHours = adjustedHours < 10 ? `0${adjustedHours}` : adjustedHours;
+      const formattedMins = adjustedMinutes < 10 ? `0${adjustedMinutes}` : adjustedMinutes;
+      return `${isNegative ? '-' : ''}${formattedHours}:${formattedMins}`;
+    };
+
     const exportData = attendances.map(a => {
       const firstSession = a.sessions.length > 0 ? a.sessions[0] : null;
       const lastSession = a.sessions.length > 0 ? a.sessions[a.sessions.length - 1] : null;
@@ -492,8 +509,8 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
         Date: moment(a.date).format('YYYY-MM-DD'),
         LoginTime: firstSession ? moment(firstSession.clockInTime).format('hh:mm A') : 'N/A',
         LogoutTime: (lastSession && lastSession.clockOutTime) ? moment(lastSession.clockOutTime).format('hh:mm A') : 'N/A',
-        TotalHours: a.totalHours.toFixed(2),
-        ExtraHours: a.extraHours.toFixed(2),
+        TotalHours: formatHoursToHHMM(a.totalHours),
+        ExtraHours: formatHoursToHHMM(a.extraHours),
         Status: a.finalRemark
       };
     });

@@ -46,18 +46,22 @@ router.post('/organization/notifications/read', authenticateJWT, async (req, res
     const { notificationId, notificationIds } = req.body;
 
     try {
-        const ids = notificationIds || (notificationId ? [notificationId] : []);
+        const ids = notificationIds || (notificationId ? [notificationId] : (req.body.id ? [req.body.id] : []));
         
-        if (ids.length === 0) {
+        if (!ids || ids.length === 0) {
             return res.status(400).send({ message: 'No notification IDs provided' });
         }
 
-        await prisma.notification.updateMany({
+        const result = await prisma.notification.updateMany({
             where: { id: { in: ids } },
             data: { isRead: true }
         });
 
-        res.status(200).send({ message: 'Notifications marked as read' });
+        if (result.count === 0) {
+            return res.status(404).send({ message: 'id not found error' });
+        }
+
+        res.status(200).send({ message: 'Notifications marked as read', count: result.count });
     } catch (error) {
         console.error('Error in /organization/notifications/read:', error);
         res.status(500).send({ message: 'Server error', error: error.message }); 
