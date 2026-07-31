@@ -401,12 +401,7 @@ router.post('/upload-profile-pic', authenticateJWT, upload.single('profilePic'),
         });
     } catch (error) {
         console.error('Error uploading profile picture:', error);
-
-        if (error instanceof multer.MulterError) {
-            return res.status(400).send({ message: error.message });
-        }
-
-        res.status(500).json({ message: 'Server error' });
+        res.status(500).json({ message: 'Server error', error: error.message });
     }
 });
 
