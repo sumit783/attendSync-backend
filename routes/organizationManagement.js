@@ -252,6 +252,16 @@ router.get('/employees-status', authenticateJWT, async (req, res) => {
       include: { sessions: true }
     });
 
+    const approvedLeaves = await prisma.leave.findMany({
+      where: {
+        organizationCode: organization.organizationCode,
+        status: 'Approved',
+        startDate: { lt: nextDate },
+        endDate: { gte: currentDate }
+      }
+    });
+    const onLeaveEmpIds = approvedLeaves.map(l => l.employeeId);
+
     const orgInTimeStr = organization.inTime || '09:00';
     const orgOutTimeStr = organization.outTime || '18:00';
 
@@ -292,9 +302,15 @@ router.get('/employees-status', authenticateJWT, async (req, res) => {
       const currentDayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
       filteredEmployees = employees.map(emp => {
         const isPresent = attendances.some(a => a.employeeId === emp.id);
+        const isOnLeave = onLeaveEmpIds.includes(emp.id);
+        
         let status = isPresent ? 'Present' : 'Absent';
-        if (!isPresent && emp.shift && emp.shift.weekOffs && emp.shift.weekOffs.includes(currentDayName)) {
+        if (!isPresent) {
+          if (isOnLeave) {
+            status = 'On Leave';
+          } else if (emp.shift && emp.shift.weekOffs && emp.shift.weekOffs.includes(currentDayName)) {
             status = 'Week Off';
+          }
         }
         return {
           ...emp,

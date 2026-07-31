@@ -26,12 +26,44 @@ router.get('/organization/leave-requests', authenticateJWT, async (req, res) => 
         }
 
         const statusFilter = req.query.status;
+        const search = req.query.search;
+        const dateFilter = req.query.dateFilter;
+        const customStartDate = req.query.customStartDate;
+        const customEndDate = req.query.customEndDate;
 
         const whereClause = {
             organizationCode: organization.organizationCode
         };
-        if (statusFilter) {
+
+        if (statusFilter && statusFilter !== 'all') {
             whereClause.status = statusFilter;
+        }
+
+        if (search) {
+            whereClause.employeeName = { contains: search }; // Case sensitive might be default for mysql, but Prisma usually does well, or we can use `{ contains: search }`
+        }
+
+        if (dateFilter && dateFilter !== 'all') {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            if (dateFilter === 'today') {
+                const tomorrow = new Date(today);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                whereClause.startDate = { lt: tomorrow };
+                whereClause.endDate = { gte: today };
+            } else if (dateFilter === 'this_month') {
+                const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+                const lastDay = new Date(today.getFullYear(), today.getMonth() + 1, 0, 23, 59, 59, 999);
+                whereClause.startDate = { lte: lastDay };
+                whereClause.endDate = { gte: firstDay };
+            } else if (dateFilter === 'custom' && customStartDate && customEndDate) {
+                const start = new Date(customStartDate);
+                const end = new Date(customEndDate);
+                end.setHours(23, 59, 59, 999);
+                whereClause.startDate = { lte: end };
+                whereClause.endDate = { gte: start };
+            }
         }
 
         const leaveRequests = await prisma.leave.findMany({
