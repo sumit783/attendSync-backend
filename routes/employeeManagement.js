@@ -693,7 +693,8 @@ router.get('/attendance/weekly', authenticateJWT, async (req, res) => {
             where: {
                 employeeId: employee.id,
                 date: { gte: startDate, lte: endDate }
-            }
+            },
+            include: { sessions: true }
         });
 
         let totalWeeklyHours = 0;
@@ -716,12 +717,27 @@ router.get('/attendance/weekly', authenticateJWT, async (req, res) => {
             const recordDate = moment(record.date).format('YYYY-MM-DD');
             const dayIndex = dailyData.findIndex(d => d.fullDate === recordDate);
             if (dayIndex !== -1) {
-                const hours = record.totalHours || 0;
+                // Calculate dynamically
+                let hours = 0;
+                if (record.sessions && record.sessions.length > 0) {
+                    hours = record.sessions.reduce((sum, session) => {
+                        let duration = session.duration || 0;
+                        if (!session.clockOutTime && session.clockInTime) {
+                            const now = moment();
+                            const end = moment.min(now, moment(record.date).endOf('day'));
+                            duration = Math.max(0, end.diff(moment(session.clockInTime)) / (1000 * 60 * 60));
+                        }
+                        return sum + duration;
+                    }, 0);
+                } else {
+                    hours = record.totalHours || 0;
+                }
+                
                 dailyData[dayIndex].hours = hours;
                 
                 const h = Math.floor(hours);
                 const m = Math.round((hours - h) * 60);
-                dailyData[dayIndex].label = m > 0 ? `${h}h ${m}m` : `${h}h`;
+                dailyData[dayIndex].label = m > 0 ? `${h}h ${m}m` : (h > 0 ? `${h}h` : '0h');
                 
                 totalWeeklyHours += hours;
             }
