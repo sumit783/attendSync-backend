@@ -1,7 +1,6 @@
 const express = require('express');
 const authenticateJWT = require('../middleware/authenticateJWT'); // Assuming JWT auth middleware
-const multer = require('multer');
-const path = require('path');
+const { upload } = require('../config/cloudinary');
 const router = express.Router();
 
 const {
@@ -16,17 +15,7 @@ const {
     updateWorkingDays
 } = require('../controllers/organizationProfileController');
 
-// Storage configuration
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, 'uploads/');
-    },
-    filename: function (req, file, cb) {
-        const ext = path.extname(file.originalname);
-        cb(null, Date.now() + ext);
-    }
-});
-const upload = multer({ storage: storage });
+// Replaced local multer with Cloudinary storage
 
 /**
  * Upload or Update Organization Profile Picture

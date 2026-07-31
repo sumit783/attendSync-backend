@@ -3,26 +3,10 @@ const jwt = require('jsonwebtoken');
 const authenticateJWT = require('../middleware/authenticateJWT');
 const haversineDistance = require('../Helpers/HaversineDistance.js');
 const createNotification = require('../Helpers/CreateNotification.js');
-const multer = require('multer');
 const moment = require('moment-timezone');
 const prisma = require('../prisma/client');
 const router = express.Router();
-
-// Configure Multer
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, './uploads/'); // Specify the upload directory
-    },
-    filename: (req, file, cb) => {
-        const uniqueName = `${Date.now()}-${file.originalname}`;
-        cb(null, uniqueName);
-    },
-});
-
-const upload = multer({
-    storage: storage,
-    limits: { fileSize: 1024 * 1024 * 2 }, // 2MB limit
-});
+const { upload } = require('../config/cloudinary');
 
 function calculateDuration(inTime, outTime) {
     // For simplicity, assume inTime and outTime are in HH:MM AM/PM format

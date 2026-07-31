@@ -2,26 +2,11 @@ const express = require('express');
 const authenticateJWT = require('../middleware/authenticateJWT');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const multer = require('multer');
+const { upload } = require('../config/cloudinary');
 const prisma = require('../prisma/client');
 const moment = require('moment-timezone');
 
 const router = express.Router();
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, './uploads/');
-  },
-  filename: (req, file, cb) => {
-    const uniqueName = `${Date.now()}-${file.originalname}`;
-    cb(null, uniqueName);
-  },
-});
-
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 1024 * 1024 * 2 },
-});
 
 // ================== Register Office Wi-Fi ==================
 router.post('/office-wifi', authenticateJWT, async (req, res) => {
