@@ -23,8 +23,7 @@ router.get('/organization/notifications', authenticateJWT, async (req, res) => {
         const notifications = await prisma.notification.findMany({
             where: {
                 organizationId: organizationId,
-                target: 'Organization',
-                isRead: false
+                target: 'Organization'
             },
             include: {
                 user: {

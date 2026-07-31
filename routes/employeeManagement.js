@@ -440,10 +440,18 @@ router.get('/attendance/today', authenticateJWT, async (req, res) => {
             return res.status(200).json({ message: 'No attendance record found for today.' });
         }
 
-        // Calculate total hours if sessions exist
-        let totalHours = attendanceRecord.totalHours || 0;
-        if (!totalHours && attendanceRecord.sessions.length > 0) {
-            totalHours = attendanceRecord.sessions.reduce((sum, session) => sum + (session.duration || 0), 0);
+        // Calculate total hours dynamically to include ongoing sessions
+        let totalHours = 0;
+        if (attendanceRecord.sessions.length > 0) {
+            totalHours = attendanceRecord.sessions.reduce((sum, session) => {
+                let duration = session.duration || 0;
+                if (!session.clockOutTime && session.clockInTime) {
+                    const now = moment();
+                    const end = moment.min(now, moment(attendanceRecord.date).endOf('day'));
+                    duration = Math.max(0, end.diff(moment(session.clockInTime)) / (1000 * 60 * 60));
+                }
+                return sum + duration;
+            }, 0);
         }
 
         // Extract clock-in and clock-out details
@@ -586,10 +594,18 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
             return res.status(200).json({ message: `No attendance record found for ${selectedDate}.` });
         }
 
-        // Calculate total hours if sessions exist
-        let totalHours = attendanceRecord.totalHours || 0;
-        if (!totalHours && attendanceRecord.sessions.length > 0) {
-            totalHours = attendanceRecord.sessions.reduce((sum, session) => sum + (session.duration || 0), 0);
+        // Calculate total hours dynamically to include ongoing sessions
+        let totalHours = 0;
+        if (attendanceRecord.sessions.length > 0) {
+            totalHours = attendanceRecord.sessions.reduce((sum, session) => {
+                let duration = session.duration || 0;
+                if (!session.clockOutTime && session.clockInTime) {
+                    const now = moment();
+                    const end = moment.min(now, moment(attendanceRecord.date).endOf('day'));
+                    duration = Math.max(0, end.diff(moment(session.clockInTime)) / (1000 * 60 * 60));
+                }
+                return sum + duration;
+            }, 0);
         }
 
         // Calculate Break Time
@@ -600,16 +616,16 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
                 const nextSession = attendanceRecord.sessions[i + 1];
                 if (currentSession.clockOutTime && nextSession.clockInTime) {
                     const gap = moment(nextSession.clockInTime).diff(moment(currentSession.clockOutTime));
-                    if (gap > 0) breakTime += gap;
+                    if (gap > 0) breakTime += gap / (1000 * 60 * 60); // Convert to hours
                 }
             }
         }
 
-        // Calculate Overtime (assuming 9 hours standard shift = 9 * 60 * 60 * 1000)
-        const STANDARD_SHIFT_MS = 9 * 60 * 60 * 1000;
+        // Calculate Overtime (assuming 9 hours standard shift)
+        const STANDARD_SHIFT_HOURS = 9;
         let overtime = 0;
-        if (totalHours > STANDARD_SHIFT_MS) {
-            overtime = totalHours - STANDARD_SHIFT_MS;
+        if (totalHours > STANDARD_SHIFT_HOURS) {
+            overtime = totalHours - STANDARD_SHIFT_HOURS;
         }
 
         // Extract first and last session details

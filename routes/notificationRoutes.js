@@ -15,20 +15,10 @@ router.get('/employee/notifications', authenticateJWT, async (req, res) => {
         const notifications = await prisma.notification.findMany({
             where: {
                 userId: employeeId,
-                target: 'Employee',
-                isRead: false
+                target: 'Employee'
             },
             orderBy: { createdAt: 'desc' }
         });
-
-        // Mark the fetched notifications as read
-        if (notifications.length > 0) {
-            const notificationIds = notifications.map(n => n.id);
-            await prisma.notification.updateMany({
-                where: { id: { in: notificationIds } },
-                data: { isRead: true }
-            });
-        }
 
         res.status(200).send({ notifications });
     } catch (error) {
