@@ -220,6 +220,17 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
             where: {
                 employeeId: employeeId,
                 organizationCode: organizationCode
+            },
+            include: {
+                sessions: {
+                    select: {
+                        clockInRemark: true
+                    },
+                    orderBy: {
+                        clockInTime: 'asc'
+                    },
+                    take: 1
+                }
             }
         });
 
@@ -239,7 +250,11 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
 
         attendances.forEach(a => {
             const dateStr = moment(a.date).format('YYYY-MM-DD');
-            attendanceMap[dateStr] = a.finalRemark;
+            const firstSessionRemark = a.sessions && a.sessions.length > 0 ? a.sessions[0].clockInRemark : null;
+            attendanceMap[dateStr] = {
+                finalRemark: a.finalRemark,
+                isLate: firstSessionRemark === 'Late'
+            };
             allAttendanceDates.add(dateStr);
         });
 
@@ -259,13 +274,19 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
             employeeId,
             employeeName: employee.employeeName,
             presentDates: [],
+            lateDates: [],
             absentDates: [],
             leaveDates: [],
         };
 
         allDates.forEach(date => {
-            if (['Present', 'Half Day', 'Left Early', 'Clocked In'].includes(attendanceMap[date])) {
-                result.presentDates.push(date);
+            const att = attendanceMap[date];
+            if (att && ['Present', 'Half Day', 'Left Early', 'Clocked In'].includes(att.finalRemark)) {
+                if (att.isLate) {
+                    result.lateDates.push(date);
+                } else {
+                    result.presentDates.push(date);
+                }
             } else if (leaveDates.has(date)) {
                 result.leaveDates.push(date);
             } else {
@@ -592,9 +613,44 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
             totalHours = attendanceRecord.sessions.reduce((sum, session) => sum + (session.duration || 0), 0);
         }
 
+        // Calculate Break Time
+        let breakTime = 0;
+        if (attendanceRecord.sessions.length > 1) {
+            for (let i = 0; i < attendanceRecord.sessions.length - 1; i++) {
+                const currentSession = attendanceRecord.sessions[i];
+                const nextSession = attendanceRecord.sessions[i + 1];
+                if (currentSession.clockOutTime && nextSession.clockInTime) {
+                    const gap = moment(nextSession.clockInTime).diff(moment(currentSession.clockOutTime));
+                    if (gap > 0) breakTime += gap;
+                }
+            }
+        }
+
+        // Calculate Overtime (assuming 9 hours standard shift = 9 * 60 * 60 * 1000)
+        const STANDARD_SHIFT_MS = 9 * 60 * 60 * 1000;
+        let overtime = 0;
+        if (totalHours > STANDARD_SHIFT_MS) {
+            overtime = totalHours - STANDARD_SHIFT_MS;
+        }
+
         // Extract first and last session details
         const firstSession = attendanceRecord.sessions.length > 0 ? attendanceRecord.sessions[0] : null;
         const lastSession = attendanceRecord.sessions.length > 0 ? attendanceRecord.sessions[attendanceRecord.sessions.length - 1] : null;
+
+        // Determine Status
+        let status = 'Absent';
+        if (firstSession) {
+            if (firstSession.clockInRemark === 'Late') {
+                status = 'Late';
+            } else {
+                status = 'Present';
+            }
+        }
+        
+        // If not clocked out, override to 'Working'
+        if (lastSession && !lastSession.clockOutTime) {
+            status = 'Working';
+        }
 
         // Format session details
         const formattedSessions = attendanceRecord.sessions.map(session => ({
@@ -613,12 +669,82 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
             clockOutTime: lastSession?.clockOutTime || 'Not clocked out',
             clockOutRemark: lastSession?.clockOutRemark || 'N/A',
             totalHours: totalHours,
+            breakTime: breakTime,
+            overtime: overtime,
+            status: status,
             sessions: formattedSessions, // Include all sessions
         };
 
         res.status(200).json({ attendance: formattedRecord });
     } catch (error) {
         console.error('Error fetching attendance record rrrrrrrr:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+router.get('/attendance/weekly', authenticateJWT, async (req, res) => {
+    try {
+        const token = req.headers.authorization?.split(' ')[1];
+        if (!token) return res.status(401).json({ message: 'Authorization token is required.' });
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        
+        const employee = await prisma.employee.findUnique({ where: { id: decoded.id } });
+        if (!employee) return res.status(404).json({ message: 'Employee not found.' });
+
+        // Default to current week (Monday-Sunday) if no dates provided
+        const startDate = req.query.startDate ? moment(req.query.startDate).startOf('day').toDate() : moment().startOf('isoWeek').toDate();
+        const endDate = req.query.endDate ? moment(req.query.endDate).endOf('day').toDate() : moment().endOf('isoWeek').toDate();
+
+        const attendances = await prisma.attendance.findMany({
+            where: {
+                employeeId: employee.id,
+                date: { gte: startDate, lte: endDate }
+            }
+        });
+
+        let totalWeeklyHours = 0;
+        const dailyData = [];
+
+        // Initialize array for the 7 days of the week
+        for (let i = 0; i < 7; i++) {
+            const currentDay = moment(startDate).add(i, 'days');
+            dailyData.push({
+                fullDate: currentDay.format('YYYY-MM-DD'),
+                day: currentDay.format('ddd'),
+                date: currentDay.format('DD'),
+                hours: 0,
+                label: '0h'
+            });
+        }
+
+        // Populate actual hours
+        attendances.forEach(record => {
+            const recordDate = moment(record.date).format('YYYY-MM-DD');
+            const dayIndex = dailyData.findIndex(d => d.fullDate === recordDate);
+            if (dayIndex !== -1) {
+                const hours = record.totalHours || 0;
+                dailyData[dayIndex].hours = hours;
+                
+                const h = Math.floor(hours);
+                const m = Math.round((hours - h) * 60);
+                dailyData[dayIndex].label = m > 0 ? `${h}h ${m}m` : `${h}h`;
+                
+                totalWeeklyHours += hours;
+            }
+        });
+
+        const totalH = Math.floor(totalWeeklyHours);
+        const totalM = Math.round((totalWeeklyHours - totalH) * 60);
+        const totalLabel = totalM > 0 ? `${totalH}h ${totalM}m` : `${totalH}h`;
+
+        res.status(200).json({
+            weeklyData: dailyData,
+            totalWeeklyHours: totalWeeklyHours,
+            totalLabel: totalLabel,
+            dateRange: `${moment(startDate).format('DD MMM')} - ${moment(endDate).format('DD MMM YYYY')}`
+        });
+
+    } catch (error) {
+        console.error('Error in /attendance/weekly:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 });

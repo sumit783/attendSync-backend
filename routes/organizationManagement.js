@@ -531,11 +531,31 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
       };
     });
 
-    res.status(200).send({ exportData });
+    const employeeSummary = {};
+    attendances.forEach(a => {
+      const email = a.employee ? a.employee.employeeEmail : 'unknown';
+      if (!employeeSummary[email]) {
+        employeeSummary[email] = {
+          EmployeeName: a.employeeName,
+          Email: email,
+          TotalDecimalHours: 0
+        };
+      }
+      employeeSummary[email].TotalDecimalHours += (a.totalHours || 0);
+    });
+
+    const summaryData = Object.values(employeeSummary).map(emp => ({
+      EmployeeName: emp.EmployeeName,
+      Email: emp.Email,
+      TotalMonthlyHours: formatHoursToHHMM(emp.TotalDecimalHours)
+    }));
+
+    res.status(200).send({ exportData, summaryData });
   } catch (error) {
     console.error('Error exporting attendance:', error);
     res.status(500).send({ message: 'Server error', error: error.message });
   }
 });
+
 
 module.exports = router;
