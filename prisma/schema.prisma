@@ -57,10 +57,11 @@ model Employee {
   status           Status       @default(active)
   lastLogin        DateTime?
 
-  attendances   Attendance[]
-  leaves        Leave[]
-  notifications Notification[]
-  devices       EmployeeDevice[]
+  attendances    Attendance[]
+  leaves         Leave[]
+  notifications  Notification[]
+  devices        EmployeeDevice[]
+  regularizations AttendanceRegularization[]
 
   shiftId       String?
   shift         Shift?       @relation(fields: [shiftId], references: [id])
@@ -110,11 +111,13 @@ model Attendance {
 
   sessions Session[]
 
-  totalHours  Float    @default(0)
-  extraHours  Float    @default(0)
-  finalRemark String   @default("Absent")
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @default(now())
+  totalHours       Float    @default(0)
+  extraHours       Float    @default(0)
+  finalRemark      String   @default("Absent")
+  regularized      Boolean  @default(false)
+  regularizationId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now())
 }
 
 model Session {
@@ -197,4 +200,30 @@ enum TargetType {
 enum DeviceStatus {
   ACTIVE
   REVOKED
+}
+
+model AttendanceRegularization {
+  id                String               @id @default(uuid())
+  employeeId        String
+  employee          Employee             @relation(fields: [employeeId], references: [id])
+  organizationCode  String
+  attendanceDate    DateTime
+  requestType       String               // e.g. "Missing Check-In", "Missing Check-Out", "System Error"
+  requestedCheckIn  String?              // e.g. "09:00"
+  requestedCheckOut String?              // e.g. "18:00"
+  reason            String
+  attachment        String?              // URL or path
+  status            RegularizationStatus @default(Pending)
+  adminRemark       String?
+  approvedBy        String?              // Admin/Manager ID or name
+  approvedAt        DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+}
+
+enum RegularizationStatus {
+  Pending
+  Approved
+  Rejected
+  Cancelled
 }

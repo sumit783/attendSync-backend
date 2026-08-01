@@ -19,6 +19,7 @@ const employeeAuth = require('./routes/employeeAuth');
 const leavesRoutes = require('./routes/leaveRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const orgNotificationRoutes = require('./routes/organizationNotification');
+const regularizationRoutes = require('./routes/regularizationRoutes');
 // const AbsenceMarker = require('./Handlers/AbsenceHandlers');
 // Import the cron jobs so they start running
 require('./Handlers/cronJobs'); // ✅ This will execute and schedule your cron jobs
@@ -97,6 +98,7 @@ app.use('/api/employee', employeeAuth);
 app.use('/api/leave', leavesRoutes);
 app.use('/api/notification', notificationRoutes);
 app.use('/api/notification', orgNotificationRoutes);
+app.use('/api/regularization', regularizationRoutes);
 
 app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
 

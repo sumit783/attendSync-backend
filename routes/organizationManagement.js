@@ -224,27 +224,28 @@ router.get('/employees-status', authenticateJWT, async (req, res) => {
     const nextDate = new Date(currentDate);
     nextDate.setDate(nextDate.getDate() + 1);
 
-    const employees = await prisma.employee.findMany({
-      where: { organizationCode: organization.organizationCode },
-      include: { shift: true }
-    });
+    const [employees, attendances, approvedLeaves] = await Promise.all([
+      prisma.employee.findMany({
+        where: { organizationCode: organization.organizationCode },
+        include: { shift: true }
+      }),
+      prisma.attendance.findMany({
+        where: {
+          organizationCode: organization.organizationCode,
+          date: { gte: currentDate, lt: nextDate }
+        },
+        include: { sessions: true }
+      }),
+      prisma.leave.findMany({
+        where: {
+          organizationCode: organization.organizationCode,
+          status: 'Approved',
+          startDate: { lt: nextDate },
+          endDate: { gte: currentDate }
+        }
+      })
+    ]);
 
-    const attendances = await prisma.attendance.findMany({
-      where: {
-        organizationCode: organization.organizationCode,
-        date: { gte: currentDate, lt: nextDate }
-      },
-      include: { sessions: true }
-    });
-
-    const approvedLeaves = await prisma.leave.findMany({
-      where: {
-        organizationCode: organization.organizationCode,
-        status: 'Approved',
-        startDate: { lt: nextDate },
-        endDate: { gte: currentDate }
-      }
-    });
     const onLeaveEmpIds = approvedLeaves.map(l => l.employeeId);
 
     const orgInTimeStr = organization.inTime || '09:00';
@@ -454,34 +455,34 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
 
     const { startDate, endDate } = req.query;
     
-    let dateFilter = {};
-    if (startDate || endDate) {
-      dateFilter = {};
-      if (startDate) {
-        dateFilter.gte = new Date(startDate);
-      }
-      if (endDate) {
-        const end = new Date(endDate);
-        end.setHours(23, 59, 59, 999);
-        dateFilter.lte = end;
-      }
-    }
+    const start = startDate ? moment(startDate).startOf('day') : moment().startOf('month');
+    const end = endDate ? moment(endDate).endOf('day') : moment().endOf('month');
+    const today = moment().endOf('day');
+    const actualEnd = end.isAfter(today) ? today : end;
 
-    const attendances = await prisma.attendance.findMany({
-      where: {
-        organizationCode: organization.organizationCode,
-        ...(Object.keys(dateFilter).length > 0 && { date: dateFilter })
-      },
-      include: {
-        sessions: {
-          orderBy: { clockInTime: 'asc' }
+    const [employees, attendances, approvedLeaves] = await Promise.all([
+      prisma.employee.findMany({
+        where: { organizationCode: organization.organizationCode, status: { not: 'inactive' } },
+        include: { shift: true }
+      }),
+      prisma.attendance.findMany({
+        where: {
+          organizationCode: organization.organizationCode,
+          date: { gte: start.toDate(), lte: actualEnd.toDate() }
         },
-        employee: {
-          select: { employeeName: true, employeeEmail: true }
+        include: {
+          sessions: { orderBy: { clockInTime: 'asc' } }
         }
-      },
-      orderBy: { date: 'desc' }
-    });
+      }),
+      prisma.leave.findMany({
+        where: {
+          organizationCode: organization.organizationCode,
+          status: 'Approved',
+          startDate: { lte: actualEnd.toDate() },
+          endDate: { gte: start.toDate() }
+        }
+      })
+    ]);
 
     const formatHoursToHHMM = (decimalHours) => {
       if (!decimalHours) return '00:00';
@@ -500,34 +501,80 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
       return `${isNegative ? '-' : ''}${formattedHours}:${formattedMins}`;
     };
 
-    const exportData = attendances.map(a => {
-      const firstSession = a.sessions.length > 0 ? a.sessions[0] : null;
-      const lastSession = a.sessions.length > 0 ? a.sessions[a.sessions.length - 1] : null;
-
-      return {
-        EmployeeName: a.employeeName,
-        Email: a.employee ? a.employee.employeeEmail : '',
-        Date: moment(a.date).format('YYYY-MM-DD'),
-        LoginTime: firstSession ? moment(firstSession.clockInTime).format('hh:mm A') : 'N/A',
-        LogoutTime: (lastSession && lastSession.clockOutTime) ? moment(lastSession.clockOutTime).format('hh:mm A') : 'N/A',
-        TotalHours: formatHoursToHHMM(a.totalHours),
-        ExtraHours: formatHoursToHHMM(a.extraHours),
-        Status: a.finalRemark
-      };
-    });
-
+    const exportData = [];
     const employeeSummary = {};
-    attendances.forEach(a => {
-      const email = a.employee ? a.employee.employeeEmail : 'unknown';
-      if (!employeeSummary[email]) {
-        employeeSummary[email] = {
-          EmployeeName: a.employeeName,
+
+    const orgInTimeStr = organization.inTime || '09:00';
+    const orgOutTimeStr = organization.outTime || '18:00';
+
+    for (let m = moment(start); m.isSameOrBefore(actualEnd); m.add(1, 'days')) {
+      const currentDayName = m.format('dddd');
+      const currentDateStr = m.format('YYYY-MM-DD');
+      
+      employees.forEach(emp => {
+        const email = emp.employeeEmail || 'unknown';
+        if (!employeeSummary[email]) {
+          employeeSummary[email] = {
+            EmployeeName: emp.employeeName,
+            Email: email,
+            TotalDecimalHours: 0
+          };
+        }
+
+        const attendance = attendances.find(a => a.employeeId === emp.id && moment(a.date).format('YYYY-MM-DD') === currentDateStr);
+        const isOnLeave = approvedLeaves.some(l => l.employeeId === emp.id && moment(l.startDate).startOf('day').isSameOrBefore(m) && moment(l.endDate).endOf('day').isSameOrAfter(m));
+        const isWeekOff = emp.shift && emp.shift.weekOffs && emp.shift.weekOffs.includes(currentDayName);
+
+        let status = '';
+        let loginTime = 'N/A';
+        let logoutTime = 'N/A';
+        let totalHours = 0;
+        let extraHours = 0;
+
+        if (attendance && attendance.sessions && attendance.sessions.length > 0) {
+          const firstSession = attendance.sessions[0];
+          const lastSession = attendance.sessions[attendance.sessions.length - 1];
+          loginTime = moment(firstSession.clockInTime).format('hh:mm A');
+          logoutTime = lastSession.clockOutTime ? moment(lastSession.clockOutTime).format('hh:mm A') : 'N/A';
+          totalHours = attendance.totalHours || 0;
+          extraHours = attendance.extraHours || 0;
+          employeeSummary[email].TotalDecimalHours += totalHours;
+
+          let expectedInTime = moment(m);
+          let expectedOutTime = moment(m);
+          const inTimeParts = (emp.shift?.startTime || orgInTimeStr).split(':');
+          const outTimeParts = (emp.shift?.endTime || orgOutTimeStr).split(':');
+          expectedInTime.set({ hour: parseInt(inTimeParts[0]), minute: parseInt(inTimeParts[1]), second: 0 });
+          expectedOutTime.set({ hour: parseInt(outTimeParts[0]), minute: parseInt(outTimeParts[1]), second: 0 });
+
+          const isLate = moment(firstSession.clockInTime).isAfter(expectedInTime);
+          const isEarlyLeave = lastSession.clockOutTime && moment(lastSession.clockOutTime).isBefore(expectedOutTime);
+
+          if (isLate && isEarlyLeave) status = 'Late Login & Early Leave';
+          else if (isLate) status = 'Late Login';
+          else if (isEarlyLeave) status = 'Early Leave';
+          else status = 'On Time';
+
+        } else {
+          if (isOnLeave) status = 'On Leave';
+          else if (isWeekOff) status = 'Week Off';
+          else status = 'Absent';
+        }
+
+        exportData.push({
+          EmployeeName: emp.employeeName,
           Email: email,
-          TotalDecimalHours: 0
-        };
-      }
-      employeeSummary[email].TotalDecimalHours += (a.totalHours || 0);
-    });
+          Date: currentDateStr,
+          LoginTime: loginTime,
+          LogoutTime: logoutTime,
+          TotalHours: formatHoursToHHMM(totalHours),
+          ExtraHours: formatHoursToHHMM(extraHours),
+          Status: status
+        });
+      });
+    }
+
+    exportData.sort((a, b) => new Date(b.Date) - new Date(a.Date)); // sort by date descending
 
     const summaryData = Object.values(employeeSummary).map(emp => ({
       EmployeeName: emp.EmployeeName,
@@ -541,6 +588,5 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
     res.status(500).send({ message: 'Server error', error: error.message });
   }
 });
-
 
 module.exports = router;

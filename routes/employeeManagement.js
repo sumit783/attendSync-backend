@@ -199,33 +199,38 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
 
         const organizationCode = employee.organizationCode;
 
-        // Step 2: Fetch all attendance records
-        const attendances = await prisma.attendance.findMany({
-            where: {
-                employeeId: employeeId,
-                organizationCode: organizationCode
-            },
-            include: {
-                sessions: {
-                    select: {
-                        clockInRemark: true
-                    },
-                    orderBy: {
-                        clockInTime: 'asc'
-                    },
-                    take: 1
+        const [attendances, leaves] = await Promise.all([
+            prisma.attendance.findMany({
+                where: {
+                    employeeId: employeeId,
+                    organizationCode: organizationCode
+                },
+                select: {
+                    date: true,
+                    finalRemark: true,
+                    sessions: {
+                        select: {
+                            clockInRemark: true
+                        },
+                        orderBy: {
+                            clockInTime: 'asc'
+                        },
+                        take: 1
+                    }
                 }
-            }
-        });
-
-        // Step 3: Fetch all approved leave records
-        const leaves = await prisma.leave.findMany({
-            where: {
-                employeeId: employeeId,
-                organizationCode: organizationCode,
-                status: 'Approved'
-            }
-        });
+            }),
+            prisma.leave.findMany({
+                where: {
+                    employeeId: employeeId,
+                    organizationCode: organizationCode,
+                    status: 'Approved'
+                },
+                select: {
+                    startDate: true,
+                    endDate: true
+                }
+            })
+        ]);
         //console.log(leaves)
 
         // Step 4: Build maps of attendance and leave dates
