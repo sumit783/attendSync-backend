@@ -103,7 +103,14 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
 
         if (!attendanceRecord) {
             // First time clock-in
-            const clockInRemark = moment(currentLocalTime).isAfter(moment(organizationInTime)) ? 'Late' : 'Present';
+            let clockInRemark = 'Present';
+            if (moment(currentLocalTime).isSame(moment(organizationInTime), 'minute')) {
+                clockInRemark = 'On Time';
+            } else if (moment(currentLocalTime).isAfter(moment(organizationInTime))) {
+                clockInRemark = 'Late';
+            } else if (moment(currentLocalTime).isBefore(moment(organizationInTime))) {
+                clockInRemark = 'Early Login';
+            }
 
             attendanceRecord = await prisma.attendance.create({
                 data: {
@@ -136,7 +143,12 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
         if (!lastSession.clockOutTime) {
             // Clock out
             const duration = Math.max(0.01, ((currentLocalTime - lastSession.clockInTime) / (1000 * 60 * 60)).toFixed(2));
-            const clockOutRemark = moment(currentLocalTime).isBefore(organizationOutTime) ? 'Left Early' : 'Present';
+            let clockOutRemark = 'Present';
+            if (moment(currentLocalTime).isSame(moment(organizationOutTime), 'minute')) {
+                clockOutRemark = 'On Time';
+            } else if (moment(currentLocalTime).isBefore(moment(organizationOutTime))) {
+                clockOutRemark = 'Left Early';
+            }
 
             await prisma.session.update({
                 where: { id: lastSession.id },
@@ -642,6 +654,10 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
         if (firstSession) {
             if (firstSession.clockInRemark === 'Late') {
                 status = 'Late';
+            } else if (firstSession.clockInRemark === 'Early Login') {
+                status = 'Early Login';
+            } else if (firstSession.clockInRemark === 'On Time') {
+                status = 'On Time';
             } else {
                 status = 'Present';
             }
