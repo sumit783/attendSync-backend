@@ -254,7 +254,7 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
             const firstSessionRemark = a.sessions && a.sessions.length > 0 ? a.sessions[0].clockInRemark : null;
             attendanceMap[dateStr] = {
                 finalRemark: a.finalRemark,
-                isLate: firstSessionRemark === 'Late'
+                remark: firstSessionRemark
             };
             allAttendanceDates.add(dateStr);
         });
@@ -276,6 +276,8 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
             employeeName: employee.employeeName,
             presentDates: [],
             lateDates: [],
+            earlyLoginDates: [],
+            onTimeDates: [],
             absentDates: [],
             leaveDates: [],
         };
@@ -283,8 +285,12 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
         allDates.forEach(date => {
             const att = attendanceMap[date];
             if (att && ['Present', 'Half Day', 'Left Early', 'Clocked In'].includes(att.finalRemark)) {
-                if (att.isLate) {
+                if (att.remark === 'Late') {
                     result.lateDates.push(date);
+                } else if (att.remark === 'Early Login') {
+                    result.earlyLoginDates.push(date);
+                } else if (att.remark === 'On Time') {
+                    result.onTimeDates.push(date);
                 } else {
                     result.presentDates.push(date);
                 }
