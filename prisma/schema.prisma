@@ -65,6 +65,8 @@ model Employee {
 
   shiftId       String?
   shift         Shift?       @relation(fields: [shiftId], references: [id])
+
+  history       EmploymentHistory[]
 }
 
 model Shift {
@@ -227,3 +229,14 @@ enum RegularizationStatus {
   Rejected
   Cancelled
 }
+
+model EmploymentHistory {
+  id               String    @id @default(uuid())
+  employeeId       String
+  employee         Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  organizationCode String
+  status           String    @default("inactive")
+  joinedAt         DateTime  @default(now())
+  leftAt           DateTime?
+}
+

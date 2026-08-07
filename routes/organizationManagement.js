@@ -57,7 +57,19 @@ router.get('/employees', authenticateJWT, async (req, res) => {
     }
 
     const employees = await prisma.employee.findMany({
-      where: { organizationCode: organization.organizationCode }
+      where: {
+        OR: [
+          { organizationCode: organization.organizationCode },
+          { history: { some: { organizationCode: organization.organizationCode } } }
+        ]
+      },
+      include: {
+        history: {
+          where: { organizationCode: organization.organizationCode },
+          orderBy: { leftAt: 'desc' },
+          take: 1
+        }
+      }
     });
 
     if (!employees || employees.length === 0) {
@@ -199,9 +211,20 @@ router.delete('/employee/:employeeId', authenticateJWT, async (req, res) => {
 
     if (!employee) return res.status(404).send({ message: 'Employee not found in your organization' });
 
-    await prisma.employee.update({
-      where: { id: employeeId },
-      data: { status: 'inactive' }
+    await prisma.$transaction(async (tx) => {
+      await tx.employee.update({
+        where: { id: employeeId },
+        data: { status: 'inactive' }
+      });
+
+      await tx.employmentHistory.create({
+        data: {
+          employeeId: employeeId,
+          organizationCode: organization.organizationCode,
+          status: 'inactive',
+          leftAt: new Date()
+        }
+      });
     });
 
     res.status(200).send({ message: 'Employee deleted successfully' });
@@ -226,8 +249,20 @@ router.get('/employees-status', authenticateJWT, async (req, res) => {
 
     const [employees, attendances, approvedLeaves] = await Promise.all([
       prisma.employee.findMany({
-        where: { organizationCode: organization.organizationCode },
-        include: { shift: true }
+        where: {
+          OR: [
+            { organizationCode: organization.organizationCode },
+            { history: { some: { organizationCode: organization.organizationCode } } }
+          ]
+        },
+        include: {
+          shift: true,
+          history: {
+            where: { organizationCode: organization.organizationCode },
+            orderBy: { leftAt: 'desc' },
+            take: 1
+          }
+        }
       }),
       prisma.attendance.findMany({
         where: {
@@ -327,7 +362,10 @@ router.get('/employee-details/:employeeId', authenticateJWT, async (req, res) =>
     const employeeDetails = await prisma.employee.findFirst({
       where: {
         id: employeeId,
-        organizationCode: organization.organizationCode,
+        OR: [
+          { organizationCode: organization.organizationCode },
+          { history: { some: { organizationCode: organization.organizationCode } } }
+        ]
       },
       select: {
         employeeName: true,
@@ -462,8 +500,20 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
 
     const [employees, attendances, approvedLeaves] = await Promise.all([
       prisma.employee.findMany({
-        where: { organizationCode: organization.organizationCode, status: { not: 'inactive' } },
-        include: { shift: true }
+        where: {
+          OR: [
+            { organizationCode: organization.organizationCode },
+            { history: { some: { organizationCode: organization.organizationCode } } }
+          ]
+        },
+        include: {
+          shift: true,
+          history: {
+            where: { organizationCode: organization.organizationCode },
+            orderBy: { leftAt: 'desc' },
+            take: 1
+          }
+        }
       }),
       prisma.attendance.findMany({
         where: {

@@ -102,6 +102,14 @@ router.post('/login', async (req, res) => {
         
         if (!user.isVerified) return res.status(400).send({ message: 'Email is not verified. Please verify your email to log in.' });
 
+        if (userType === 'Employee' && user.status === 'inactive') {
+            return res.status(403).send({ 
+                message: 'Account Inactive. Please change your organization code to continue.', 
+                needsOrgChange: true, 
+                employeeId: user.id 
+            });
+        }
+
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).send({ message: 'Invalid email or password' });
 
@@ -234,6 +242,44 @@ router.post('/reset-password', async (req, res) => {
         res.status(200).send({ message: 'Password reset successfully.' });
     } catch(err) {
         console.error(err);
+        res.status(500).send({ message: 'Internal Server Error' });
+    }
+});
+
+router.post('/change-organization', async (req, res) => {
+    try {
+        const { employeeId, newOrganizationCode } = req.body;
+        
+        const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
+        if (!employee) return res.status(404).send({ message: 'Employee not found' });
+        
+        const newOrg = await prisma.organization.findUnique({ where: { organizationCode: newOrganizationCode } });
+        if (!newOrg) return res.status(404).send({ message: 'Invalid organization code' });
+
+        await prisma.$transaction(async (tx) => {
+            // Log joining new organization
+            await tx.employmentHistory.create({
+                data: {
+                    employeeId: employee.id,
+                    organizationCode: newOrganizationCode,
+                    status: 'active'
+                }
+            });
+
+            await tx.employee.update({
+                where: { id: employee.id },
+                data: {
+                    organizationId: newOrg.id,
+                    organizationCode: newOrganizationCode,
+                    status: 'active',
+                    shiftId: null // reset shift when joining new org
+                }
+            });
+        });
+
+        res.status(200).send({ message: 'Organization changed successfully. Please login again.' });
+    } catch (err) {
+        console.error('Error in change-organization:', err);
         res.status(500).send({ message: 'Internal Server Error' });
     }
 });
