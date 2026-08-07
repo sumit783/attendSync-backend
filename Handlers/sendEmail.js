@@ -10,6 +10,7 @@ const sendOTPEmail = async (email, otp, subject) => {
         to: email,
         subject: subject,
         project: 'AttendSync',
+        apiKey: 'XrFBLePtHyxm',
         html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
           <h2 style="color: #4CAF50;">Your OTP for Verification</h2>
