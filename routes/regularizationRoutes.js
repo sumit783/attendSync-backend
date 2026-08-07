@@ -141,9 +141,9 @@ router.put('/admin/:id/approve', authenticateJWT, async (req, res) => {
             }
         });
 
-        // Parse requested check in/out
-        const clockInDate = request.requestedCheckIn ? new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckIn}:00.000Z`) : startOfDay;
-        const clockOutDate = request.requestedCheckOut ? new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckOut}:00.000Z`) : startOfDay;
+        // Parse requested check in/out using IST (+05:30) offset
+        const clockInDate = request.requestedCheckIn ? new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckIn}:00+05:30`) : startOfDay;
+        const clockOutDate = request.requestedCheckOut ? new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckOut}:00+05:30`) : startOfDay;
         let duration = 0;
         if (request.requestedCheckIn && request.requestedCheckOut) {
              duration = (clockOutDate.getTime() - clockInDate.getTime()) / (1000 * 60 * 60); // hours
