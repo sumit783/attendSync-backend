@@ -208,9 +208,7 @@ router.post('/forgot-password', async (req, res) => {
             data: { otp, otpExpires: new Date(Date.now() + 2 * 60 * 1000) }
         });
     
-        if (process.env.NODE_ENV !== 'development') {
-            sendOTPEmail(email, otp, 'Password Reset OTP');
-        }
+        sendOTPEmail(email, otp, 'Password Reset OTP');
         res.status(200).send({ message: 'Password reset OTP sent to email.' });
     } catch(err) {
         console.error(err);

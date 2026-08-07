@@ -25,3 +25,23 @@ process.on('unhandledRejection', (err) => {
     process.exit(1);
   });
 });
+
+const prisma = require('./prisma/client');
+
+const shutdown = async () => {
+  logger.info('Shutting down gracefully...');
+  server.close(async () => {
+    logger.info('Closed out remaining connections.');
+    await prisma.$disconnect();
+    process.exit(0);
+  });
+};
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+
+// For nodemon restarts
+process.once('SIGUSR2', async () => {
+  await prisma.$disconnect();
+  process.kill(process.pid, 'SIGUSR2');
+});

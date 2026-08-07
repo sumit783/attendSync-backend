@@ -1,7 +1,7 @@
 // Function to send OTP email
 const sendOTPEmail = async (email, otp, subject) => {
   try {
-    const response = await fetch('https://smtp-otp.vercel.app/api/v1/send-email', {
+    const response = await fetch('http://localhost:5001/api/v1/send-email', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -10,7 +10,7 @@ const sendOTPEmail = async (email, otp, subject) => {
         to: email,
         subject: subject,
         project: 'AttendSync',
-        apiKey: 'XrFBLePtHyxm',
+        apiKey: 'your_secret_api_key',
         html: `
         <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
           <h2 style="color: #4CAF50;">Your OTP for Verification</h2>
