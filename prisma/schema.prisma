@@ -120,6 +120,9 @@ model Attendance {
   regularizationId String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @default(now())
+
+  @@index([employeeId, date])
+  @@index([organizationCode, date])
 }
 
 model Session {
