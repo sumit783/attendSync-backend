@@ -67,6 +67,8 @@ model Employee {
   shift         Shift?       @relation(fields: [shiftId], references: [id])
 
   history       EmploymentHistory[]
+
+  @@index([organizationCode])
 }
 
 model Shift {
@@ -120,6 +122,9 @@ model Attendance {
   regularizationId String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @default(now())
+
+  @@index([employeeId, date])
+  @@index([organizationCode, date])
 }
 
 model Session {
@@ -131,6 +136,8 @@ model Session {
   duration       Float      @default(0)
   clockInRemark  String?
   clockOutRemark String?
+
+  @@index([attendanceId])
 }
 
 model Leave {
@@ -145,6 +152,9 @@ model Leave {
   status           LeaveStatus @default(Pending)
   reason           String?
   createdAt        DateTime    @default(now())
+
+  @@index([employeeId, startDate, endDate])
+  @@index([organizationCode, startDate, endDate])
 }
 
 model Notification {
@@ -221,6 +231,9 @@ model AttendanceRegularization {
   approvedAt        DateTime?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
+
+  @@index([employeeId, attendanceDate])
+  @@index([organizationCode, status])
 }
 
 enum RegularizationStatus {

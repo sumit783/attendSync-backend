@@ -203,7 +203,8 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
         const employeeId = req.user.id;
 
         const employee = await prisma.employee.findUnique({
-            where: { id: employeeId }
+            where: { id: employeeId },
+            include: { shift: true }
         });
         if (!employee) {
             return res.status(404).json({ message: 'Employee not found.' });
@@ -280,12 +281,16 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
             onTimeDates: [],
             absentDates: [],
             leaveDates: [],
+            regularizedDates: [],
+            weekOffDays: employee.shift && employee.shift.weekOffs ? employee.shift.weekOffs.split(',') : []
         };
 
         allDates.forEach(date => {
             const att = attendanceMap[date];
-            if (att && ['Present', 'Half Day', 'Left Early', 'Clocked In'].includes(att.finalRemark)) {
-                if (att.remark === 'Late') {
+            if (att && ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'].includes(att.finalRemark)) {
+                if (att.finalRemark === 'Regularized') {
+                    result.regularizedDates.push(date);
+                } else if (att.remark === 'Late') {
                     result.lateDates.push(date);
                 } else if (att.remark === 'Early Login') {
                     result.earlyLoginDates.push(date);
@@ -508,7 +513,7 @@ router.get('/attendance/today', authenticateJWT, async (req, res) => {
     }
 });
 
-router.get('/attendance/present-nearby', authenticateJWT, async (req, res) => {
+router.get('/attendance/present-nearby', authenticateJWT,async (req, res) => {
     try {
         console.log("Received Request Body:", req.body);
 
