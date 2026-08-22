@@ -567,7 +567,13 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
           employeeSummary[email] = {
             EmployeeName: emp.employeeName,
             Email: email,
-            TotalDecimalHours: 0
+            ExpectedWorkingDays: 0,
+            PresentDays: 0,
+            AbsentDays: 0,
+            LeaveDays: 0,
+            WeekoffTaken: 0,
+            TotalDecimalHours: 0,
+            TotalExtraDecimalHours: 0
           };
         }
 
@@ -582,13 +588,16 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
         let extraHours = 0;
 
         if (attendance && attendance.sessions && attendance.sessions.length > 0) {
+          employeeSummary[email].PresentDays += 1;
           const firstSession = attendance.sessions[0];
           const lastSession = attendance.sessions[attendance.sessions.length - 1];
           loginTime = moment(firstSession.clockInTime).format('hh:mm A');
           logoutTime = lastSession.clockOutTime ? moment(lastSession.clockOutTime).format('hh:mm A') : 'N/A';
           totalHours = attendance.totalHours || 0;
           extraHours = attendance.extraHours || 0;
+          
           employeeSummary[email].TotalDecimalHours += totalHours;
+          employeeSummary[email].TotalExtraDecimalHours += extraHours;
 
           let expectedInTime = moment(m);
           let expectedOutTime = moment(m);
@@ -606,9 +615,20 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
           else status = 'On Time';
 
         } else {
-          if (isOnLeave) status = 'On Leave';
-          else if (isWeekOff) status = 'Week Off';
-          else status = 'Absent';
+          if (isOnLeave) {
+            status = 'On Leave';
+            employeeSummary[email].LeaveDays += 1;
+          } else if (isWeekOff) {
+            status = 'Week Off';
+            employeeSummary[email].WeekoffTaken += 1;
+          } else {
+            status = 'Absent';
+            employeeSummary[email].AbsentDays += 1;
+          }
+        }
+        
+        if (!isWeekOff) {
+          employeeSummary[email].ExpectedWorkingDays += 1;
         }
 
         exportData.push({
@@ -627,9 +647,14 @@ router.get('/export-attendance', authenticateJWT, async (req, res) => {
     exportData.sort((a, b) => new Date(b.Date) - new Date(a.Date)); // sort by date descending
 
     const summaryData = Object.values(employeeSummary).map(emp => ({
-      EmployeeName: emp.EmployeeName,
-      Email: emp.Email,
-      TotalMonthlyHours: formatHoursToHHMM(emp.TotalDecimalHours)
+      'Employee Name': emp.EmployeeName,
+      'Expected Working Days': emp.ExpectedWorkingDays,
+      'Present Days': emp.PresentDays,
+      'Absent Days': emp.AbsentDays,
+      'Leave Days': emp.LeaveDays,
+      'Weekoff Taken': emp.WeekoffTaken,
+      'Total Working Hours': formatHoursToHHMM(emp.TotalDecimalHours),
+      'Extra Working Hours': formatHoursToHHMM(emp.TotalExtraDecimalHours)
     }));
 
     res.status(200).send({ exportData, summaryData });
