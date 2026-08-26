@@ -60,7 +60,7 @@ exports.login = async (req, res) => {
     return res.status(400).send({ message: 'Email not verified. Please verify your email to log in.' });
   }
   
-  const token = jwt.sign({ id: user.id, email: user.organizationEmail }, process.env.JWT_SECRET, { expiresIn: '60d' });
+  const token = jwt.sign({ id: user.id, email: user.organizationEmail }, process.env.JWT_SECRET);
   res.status(200).send({ message: 'Organization login successful', token, id: user.id, organization: user });
 };
 
