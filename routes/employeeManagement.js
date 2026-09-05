@@ -212,7 +212,7 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
 
         const organizationCode = employee.organizationCode;
 
-        const [attendances, leaves] = await Promise.all([
+        const [attendances, leaves, pendingRegularizations] = await Promise.all([
             prisma.attendance.findMany({
                 where: {
                     employeeId: employeeId,
@@ -242,6 +242,16 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
                     startDate: true,
                     endDate: true
                 }
+            }),
+            prisma.attendanceRegularization.findMany({
+                where: {
+                    employeeId: employeeId,
+                    organizationCode: organizationCode,
+                    status: 'Pending'
+                },
+                select: {
+                    attendanceDate: true
+                }
             })
         ]);
         //console.log(leaves)
@@ -269,7 +279,12 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
             }
         });
 
-        const allDates = new Set([...allAttendanceDates, ...leaveDates]);
+        const pendingRegularizeSet = new Set();
+        pendingRegularizations.forEach(reg => {
+            pendingRegularizeSet.add(moment(reg.attendanceDate).format('YYYY-MM-DD'));
+        });
+
+        const allDates = new Set([...allAttendanceDates, ...leaveDates, ...pendingRegularizeSet]);
 
         // Step 5: Categorize dates
         const result = {
@@ -282,12 +297,15 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
             absentDates: [],
             leaveDates: [],
             regularizedDates: [],
+            pendingRegularizeDates: [],
             weekOffDays: employee.shift && employee.shift.weekOffs ? employee.shift.weekOffs.split(',') : []
         };
 
         allDates.forEach(date => {
             const att = attendanceMap[date];
-            if (att && ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'].includes(att.finalRemark)) {
+            if (pendingRegularizeSet.has(date)) {
+                result.pendingRegularizeDates.push(date);
+            } else if (att && ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'].includes(att.finalRemark)) {
                 if (att.finalRemark === 'Regularized') {
                     result.regularizedDates.push(date);
                 } else if (att.remark === 'Late') {
