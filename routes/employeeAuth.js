@@ -137,15 +137,29 @@ router.post('/login', async (req, res) => {
             } else if (user.devices[0].uuid !== deviceId && process.env.NODE_ENV !== 'development') {
                 if (platform === 'ios' || platform === 'web') {
                     // Update the device ID since iOS PWA clears it after 7 days
-                    await prisma.employeeDevice.update({
-                        where: { id: user.devices[0].id },
-                        data: {
-                            uuid: deviceId,
-                            model: deviceModel || 'Unknown',
-                            manufacturer: manufacturer || 'Unknown',
-                            androidVersion: osVersion || 'Unknown'
+                    const existingDevice = await prisma.employeeDevice.findUnique({ where: { uuid: deviceId } });
+                    
+                    if (existingDevice) {
+                        // Device already exists (maybe shared phone), just assign it to this user
+                        await prisma.employeeDevice.update({
+                            where: { uuid: deviceId },
+                            data: { employeeId: user.id, status: 'ACTIVE' }
+                        });
+                        // Remove the old device if it's different
+                        if (existingDevice.id !== user.devices[0].id) {
+                            await prisma.employeeDevice.delete({ where: { id: user.devices[0].id } });
                         }
-                    });
+                    } else {
+                        await prisma.employeeDevice.update({
+                            where: { id: user.devices[0].id },
+                            data: {
+                                uuid: deviceId,
+                                model: deviceModel || 'Unknown',
+                                manufacturer: manufacturer || 'Unknown',
+                                androidVersion: osVersion || 'Unknown'
+                            }
+                        });
+                    }
                 } else {
                     return res.status(403).send({ message: 'Unauthorized device. Please contact your admin to reset your device.' });
                 }

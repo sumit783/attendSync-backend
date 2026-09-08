@@ -53,10 +53,22 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             if (employee.devices[0].uuid !== deviceId) {
                 // If iOS, we accept it and update it because iOS PWA local storage clears after 7 days
                 if (isIOS || deviceId === 'web-fallback-id') {
-                    await prisma.employeeDevice.update({
-                        where: { id: employee.devices[0].id },
-                        data: { uuid: deviceId }
-                    });
+                    const existingDevice = await prisma.employeeDevice.findUnique({ where: { uuid: deviceId } });
+                    
+                    if (existingDevice) {
+                        await prisma.employeeDevice.update({
+                            where: { uuid: deviceId },
+                            data: { employeeId: employee.id, status: 'ACTIVE' }
+                        });
+                        if (existingDevice.id !== employee.devices[0].id) {
+                            await prisma.employeeDevice.delete({ where: { id: employee.devices[0].id } });
+                        }
+                    } else {
+                        await prisma.employeeDevice.update({
+                            where: { id: employee.devices[0].id },
+                            data: { uuid: deviceId }
+                        });
+                    }
                 } else {
                     return res.status(403).json({ message: 'Device not registered or revoked. Please contact administrator.' });
                 }
