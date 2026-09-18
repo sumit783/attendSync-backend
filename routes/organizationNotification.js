@@ -2,22 +2,17 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma/client');
 const authenticateJWT = require('../middleware/authenticateJWT');
+const authenticateAdmin = require('../middleware/authenticateAdmin');
+const requireOrganizationAccess = require('../middleware/requireOrganizationAccess');
 const router = express.Router();
 
 // ================== Fetch Organization Notifications ==================
-router.get('/organization/notifications', authenticateJWT, async (req, res) => {
+router.get('/organization/notifications', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
     try {
-        const token = req.headers.authorization.split(' ')[1];
-        console.log('Received Token:', token);
-
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        console.log('Decoded JWT:', decoded);
-
-        const organizationId = decoded.id;
-        console.log('Organization ID:', organizationId);
-
+        const organizationId = req.organizationId;
+        
         if (!organizationId) {
-            return res.status(400).send({ message: 'Organization ID missing in token' });
+            return res.status(400).send({ message: 'Organization ID missing' });
         }
 
         const notifications = await prisma.notification.findMany({
@@ -41,7 +36,7 @@ router.get('/organization/notifications', authenticateJWT, async (req, res) => {
 });
 
 // ================== Mark Notification as Read ==================
-router.post('/organization/notifications/read', authenticateJWT, async (req, res) => {
+router.post('/organization/notifications/read', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
     const { notificationId, notificationIds } = req.body;
 
     try {

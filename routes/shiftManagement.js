@@ -1,14 +1,15 @@
 const express = require('express');
-const authenticateJWT = require('../middleware/authenticateJWT');
+const authenticateAdmin = require('../middleware/authenticateAdmin');
+const requireOrganizationAccess = require('../middleware/requireOrganizationAccess');
 const prisma = require('../prisma/client');
 
 const router = express.Router();
 
 // ================== Create a Shift ==================
-router.post('/', authenticateJWT, async (req, res) => {
+router.post('/', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
@@ -35,10 +36,10 @@ router.post('/', authenticateJWT, async (req, res) => {
 });
 
 // ================== Get all Shifts for Organization ==================
-router.get('/', authenticateJWT, async (req, res) => {
+router.get('/', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
@@ -61,10 +62,10 @@ router.get('/', authenticateJWT, async (req, res) => {
 });
 
 // ================== Update a Shift ==================
-router.put('/:id', authenticateJWT, async (req, res) => {
+router.put('/:id', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
@@ -97,10 +98,10 @@ router.put('/:id', authenticateJWT, async (req, res) => {
 });
 
 // ================== Delete a Shift ==================
-router.delete('/:id', authenticateJWT, async (req, res) => {
+router.delete('/:id', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
@@ -125,10 +126,10 @@ router.delete('/:id', authenticateJWT, async (req, res) => {
 });
 
 // ================== Assign Shift to Employee ==================
-router.post('/assign-to-employee/:employeeId', authenticateJWT, async (req, res) => {
+router.post('/assign-to-employee/:employeeId', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 

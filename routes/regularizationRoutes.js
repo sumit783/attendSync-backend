@@ -2,6 +2,8 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma/client');
 const authenticateJWT = require('../middleware/authenticateJWT');
+const authenticateAdmin = require('../middleware/authenticateAdmin');
+const requireOrganizationAccess = require('../middleware/requireOrganizationAccess');
 const router = express.Router();
 
 // ================== Employee: Submit Regularization Request ==================
@@ -76,12 +78,9 @@ router.get('/employee', authenticateJWT, async (req, res) => {
 });
 
 // ================== Admin: Get All Regularization Requests ==================
-router.get('/admin', authenticateJWT, async (req, res) => {
+router.get('/admin', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
     try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-        const organization = await prisma.organization.findUnique({ where: { id: decoded.id } });
+        const organization = await prisma.organization.findUnique({ where: { id: req.organizationId } });
         if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
         const requests = await prisma.attendanceRegularization.findMany({
@@ -102,12 +101,9 @@ router.get('/admin', authenticateJWT, async (req, res) => {
 });
 
 // ================== Admin: Approve Regularization Request ==================
-router.put('/admin/:id/approve', authenticateJWT, async (req, res) => {
+router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
     try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-        const organization = await prisma.organization.findUnique({ where: { id: decoded.id } });
+        const organization = await prisma.organization.findUnique({ where: { id: req.organizationId } });
         if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
         const requestId = req.params.id;
@@ -213,12 +209,9 @@ router.put('/admin/:id/approve', authenticateJWT, async (req, res) => {
 });
 
 // ================== Admin: Reject Regularization Request ==================
-router.put('/admin/:id/reject', authenticateJWT, async (req, res) => {
+router.put('/admin/:id/reject', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
     try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-        const organization = await prisma.organization.findUnique({ where: { id: decoded.id } });
+        const organization = await prisma.organization.findUnique({ where: { id: req.organizationId } });
         if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
         const requestId = req.params.id;

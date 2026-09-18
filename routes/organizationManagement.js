@@ -1,5 +1,6 @@
 const express = require('express');
-const authenticateJWT = require('../middleware/authenticateJWT');
+const authenticateAdmin = require('../middleware/authenticateAdmin');
+const requireOrganizationAccess = require('../middleware/requireOrganizationAccess');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { upload } = require('../config/cloudinary');
@@ -9,9 +10,9 @@ const moment = require('moment-timezone');
 const router = express.Router();
 
 // ================== Register Office Wi-Fi ==================
-router.post('/office-wifi', authenticateJWT, async (req, res) => {
+router.post('/office-wifi', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
-    const organizationId = req.user.id;
+    const organizationId = req.organizationId;
     const { wifiSSID, wifiBSSID, address, latitude, longitude } = req.body;
 
     if (!wifiSSID || !wifiBSSID) {
@@ -46,10 +47,10 @@ router.post('/office-wifi', authenticateJWT, async (req, res) => {
 });
 
 // ================== Get All Employees for an Organization ==================
-router.get('/employees', authenticateJWT, async (req, res) => {
+router.get('/employees', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
 
     if (!organization) {
@@ -84,10 +85,10 @@ router.get('/employees', authenticateJWT, async (req, res) => {
 });
 
 // ================== Present Employees in the Organization ==================
-router.get('/present-employees', authenticateJWT, async (req, res) => {
+router.get('/present-employees', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
@@ -157,10 +158,10 @@ router.get('/present-employees', authenticateJWT, async (req, res) => {
 });
 
 // ================== Reset Employee Device ==================
-router.post('/employees/:employeeId/reset-device', authenticateJWT, async (req, res) => {
+router.post('/employees/:employeeId/reset-device', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
@@ -193,10 +194,10 @@ router.post('/employees/:employeeId/reset-device', authenticateJWT, async (req, 
 });
 
 // ================== Delete an Employee ==================
-router.delete('/employee/:employeeId', authenticateJWT, async (req, res) => {
+router.delete('/employee/:employeeId', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
@@ -235,10 +236,10 @@ router.delete('/employee/:employeeId', authenticateJWT, async (req, res) => {
 });
 
 // ================== Get Employees Status (Present, Late, Early Leavers) ==================
-router.get('/employees-status', authenticateJWT, async (req, res) => {
+router.get('/employees-status', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
@@ -348,10 +349,10 @@ router.get('/employees-status', authenticateJWT, async (req, res) => {
 });
 
 // ================== Get Employee Details ==================
-router.get('/employee-details/:employeeId', authenticateJWT, async (req, res) => {
+router.get('/employee-details/:employeeId', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
     if (!organization) {
       return res.status(404).send({ message: 'Organization not found' });
@@ -484,10 +485,10 @@ router.get('/employee-details/:employeeId', authenticateJWT, async (req, res) =>
 });
 
 // ================== Export Attendance Data ==================
-router.get('/export-attendance', authenticateJWT, async (req, res) => {
+router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.user.id }
+      where: { id: req.organizationId }
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 

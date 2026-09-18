@@ -457,16 +457,16 @@ router.post('/upload-profile-pic', authenticateJWT, upload.single('profilePic'),
             return res.status(400).send({ message: 'No file uploaded' });
         }
 
-        // Save the file path to the employee's profile
-        const filePath = req.file.path.replace(/\\/g, '/'); // Local path to the file
+        // Save the file buffer as base64 to the employee's profile
+        const base64Image = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
         await prisma.employee.update({
             where: { id: employeeInstance.id },
-            data: { profilePic: filePath }
+            data: { profilePic: base64Image }
         });
 
         res.status(200).json({
             message: 'Profile picture uploaded successfully',
-            profilePic: filePath,
+            profilePic: base64Image,
         });
     } catch (error) {
         console.error('Error uploading profile picture:', error);

@@ -30,7 +30,19 @@ const app = express();
 connectDB();
 
 // Set security HTTP headers
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+  crossOriginOpenerPolicy: false,
+  contentSecurityPolicy: process.env.NODE_ENV === 'development' ? false : {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      "style-src": ["'self'", "'unsafe-inline'"],
+      "img-src": ["'self'", "data:", "validator.swagger.io"],
+      "upgrade-insecure-requests": [],
+    },
+  },
+}));
 
 // Logging
 if (process.env.NODE_ENV === 'development') {
@@ -101,6 +113,10 @@ app.use('/api/notification', orgNotificationRoutes);
 app.use('/api/regularization', regularizationRoutes);
 
 app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Setup Swagger UI
+const setupSwagger = require('./config/swagger');
+setupSwagger(app);
 
 app.get('/', (req, res) => {
   res.send('Maybe You are not meant to be here..');
