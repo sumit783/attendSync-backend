@@ -2,6 +2,7 @@ const express = require('express');
 const authenticateAdmin = require('../middleware/authenticateAdmin');
 const requireOrganizationAccess = require('../middleware/requireOrganizationAccess');
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const { upload } = require('../config/cloudinary');
 const prisma = require('../prisma/client');
@@ -153,6 +154,127 @@ router.get('/present-employees', authenticateAdmin, requireOrganizationAccess, a
     });
   } catch (error) {
     console.error('Error in /present-employees:', error);
+    res.status(500).send({ message: 'Server error', error: error.message });
+  }
+});
+
+// ================== Reset Employee Device ==================
+
+/**
+ * @swagger
+ * /api/organization/employees:
+ *   post:
+ *     summary: Create an employee (Admin only)
+ *     tags: [Organization Management]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - employeeName
+ *               - employeeEmail
+ *               - password
+ *             properties:
+ *               employeeName:
+ *                 type: string
+ *               employeeEmail:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               role:
+ *                 type: string
+ *                 enum: [Employee, Manager, Admin]
+ *               shiftId:
+ *                 type: string
+ *               departmentId:
+ *                 type: string
+ *               designationIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               customRoleId:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Employee created successfully
+ *       400:
+ *         description: Invalid input or employee already exists
+ */
+router.post('/employees', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+  try {
+    const { 
+      employeeName, 
+      employeeEmail, 
+      password, 
+      role, 
+      shiftId, 
+      departmentId, 
+      designationIds, 
+      customRoleId 
+    } = req.body;
+
+    if (!employeeName || !employeeEmail || !password) {
+      return res.status(400).send({ message: 'Employee name, email, and password are required' });
+    }
+
+    const organization = await prisma.organization.findUnique({
+      where: { id: req.organizationId }
+    });
+
+    if (!organization) {
+      return res.status(404).send({ message: 'Organization not found' });
+    }
+
+    const existingEmployee = await prisma.employee.findUnique({
+      where: { employeeEmail }
+    });
+
+    if (existingEmployee) {
+      return res.status(400).send({ message: 'Employee with this email already exists' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const newEmployee = await prisma.employee.create({
+      data: {
+        employeeName,
+        employeeEmail,
+        password: hashedPassword,
+        organizationId: organization.id,
+        organizationCode: organization.organizationCode,
+        isVerified: true, 
+        role: role || 'Employee',
+        shiftId: shiftId || null,
+        departmentId: departmentId || null,
+        customRoleId: customRoleId || null,
+        designations: designationIds && designationIds.length > 0 ? {
+          connect: designationIds.map(id => ({ id }))
+        } : undefined,
+      }
+    });
+
+    // Add employment history for joining
+    await prisma.employmentHistory.create({
+      data: {
+        employeeId: newEmployee.id,
+        organizationCode: organization.organizationCode,
+        status: 'active'
+      }
+    });
+
+    // update org employee count
+    await prisma.organization.update({
+        where: { id: organization.id },
+        data: { employeeCount: { increment: 1 } }
+    });
+
+    res.status(201).send({ message: 'Employee created successfully', employee: newEmployee });
+  } catch (error) {
+    console.error('Error creating employee:', error);
     res.status(500).send({ message: 'Server error', error: error.message });
   }
 });
