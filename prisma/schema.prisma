@@ -40,6 +40,11 @@ model Organization {
   notifications Notification[]
   shifts        Shift[]
   adminRoles    AdminRole[]
+  departments   Department[]
+  designations  Designation[]
+  tasks         Task[]
+  customRoles   CustomRole[]
+  holidays      Holiday[]
 }
 
 model Employee {
@@ -67,7 +72,14 @@ model Employee {
   shiftId String?
   shift   Shift?  @relation(fields: [shiftId], references: [id])
 
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  designations Designation[]
+  customRoleId  String?
+  customRole    CustomRole? @relation(fields: [customRoleId], references: [id])
+
   history EmploymentHistory[]
+  tasks   Task[]
 
   @@index([organizationCode])
 }
@@ -265,6 +277,7 @@ model Admin {
   updatedAt  DateTime  @updatedAt
 
   roles AdminRole[]
+  assignedTasks Task[]
 }
 
 enum AdminRoleType {
@@ -284,3 +297,97 @@ model AdminRole {
   @@index([adminId])
   @@index([organizationId])
 }
+
+model Department {
+  id             String        @id @default(uuid())
+  name           String
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  designations   Designation[]
+  employees      Employee[]
+
+  @@index([organizationId])
+}
+
+model Designation {
+  id             String        @id @default(uuid())
+  name           String
+  departmentId   String
+  department     Department    @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  employees      Employee[]
+
+  @@index([departmentId])
+  @@index([organizationId])
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+}
+
+model Task {
+  id             String       @id @default(uuid())
+  title          String
+  description    String?      @db.LongText
+  status         TaskStatus   @default(PENDING)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  assignedById   String?
+  assignedBy     Admin?       @relation(fields: [assignedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@index([assignedById])
+}
+
+model CustomRole {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+
+  attendanceAccess               Boolean @default(false)
+  financeAccess                  Boolean @default(false)
+  leaveAccess                    Boolean @default(false)
+  announcementAccess             Boolean @default(false)
+  designationAndWorkAssignAccess Boolean @default(false)
+  roleCreateAccess               Boolean @default(false)
+  shiftAndHolidayAccess          Boolean @default(false)
+  reportPageAccess               Boolean @default(false)
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  employees      Employee[]
+
+  @@index([organizationId])
+}
+
+model Holiday {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  startDate      DateTime
+  endDate        DateTime
+  description    String?
+
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId])
+}
+

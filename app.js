@@ -20,9 +20,15 @@ const leavesRoutes = require('./routes/leaveRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const orgNotificationRoutes = require('./routes/organizationNotification');
 const regularizationRoutes = require('./routes/regularizationRoutes');
+const departmentRoutes = require('./routes/departmentRoutes');
+const designationRoutes = require('./routes/designationRoutes');
+const customRoleRoutes = require('./routes/customRoleRoutes');
+const taskAdminRoutes = require('./routes/taskAdminRoutes');
+const taskEmployeeRoutes = require('./routes/taskEmployeeRoutes');
+const holidayRoutes = require('./routes/holidayRoutes');
 // const AbsenceMarker = require('./Handlers/AbsenceHandlers');
 // Import the cron jobs so they start running
-require('./Handlers/cronJobs'); // ✅ This will execute and schedule your cron jobs
+require('./Handlers/cronJobs'); // This will execute and schedule your cron jobs
 
 process.env.TZ = "Asia/Kolkata";
 
@@ -111,6 +117,12 @@ app.use('/api/leave', leavesRoutes);
 app.use('/api/notification', notificationRoutes);
 app.use('/api/notification', orgNotificationRoutes);
 app.use('/api/regularization', regularizationRoutes);
+app.use('/api/departments', departmentRoutes);
+app.use('/api/designations', designationRoutes);
+app.use('/api/organization/custom-roles', customRoleRoutes);
+app.use('/api/organization/tasks', taskAdminRoutes);
+app.use('/api/organization/holidays', holidayRoutes);
+app.use('/api/employee/tasks', taskEmployeeRoutes);
 
 app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
 
