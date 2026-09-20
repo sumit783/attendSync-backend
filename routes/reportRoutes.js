@@ -329,5 +329,102 @@ router.get("/leave-summary", async (req, res) => {
     }
 });
 
+// 6. Export Attendance CSV
+router.get("/export-attendance", async (req, res) => {
+    try {
+        const { startDate, endDate } = req.query;
+        const targetOrgIds = await getTargetOrgs(req);
+
+        const start = startDate
+            ? moment(startDate).tz("Asia/Kolkata").startOf("day").toDate()
+            : moment().tz("Asia/Kolkata").startOf("month").toDate();
+        const end = endDate
+            ? moment(endDate).tz("Asia/Kolkata").endOf("day").toDate()
+            : moment().tz("Asia/Kolkata").endOf("month").toDate();
+
+        const attendances = await prisma.attendance.findMany({
+            where: {
+                employee: { organizationId: { in: targetOrgIds } },
+                date: { gte: start, lte: end }
+            },
+            include: {
+                employee: {
+                    select: {
+                        employeeName: true,
+                        employeeEmail: true,
+                        organizationCode: true,
+                        organization: { select: { organizationName: true } },
+                        department: { select: { name: true } }
+                    }
+                }
+            },
+            orderBy: { date: 'asc' }
+        });
+
+        // Build CSV
+        const headers = [
+            'Employee Name',
+            'Email',
+            'Org Code',
+            'Organization',
+            'Department',
+            'Date',
+            'Clock In',
+            'Clock Out',
+            'Status',
+            'Is Late',
+            'Early Out',
+            'Work Hours'
+        ];
+
+        const rows = attendances.map(a => {
+            const emp = a.employee;
+            const dateStr = moment(a.date).tz("Asia/Kolkata").format("DD-MM-YYYY");
+            const clockIn = a.clockIn
+                ? moment(a.clockIn).tz("Asia/Kolkata").format("HH:mm:ss")
+                : '';
+            const clockOut = a.clockOut
+                ? moment(a.clockOut).tz("Asia/Kolkata").format("HH:mm:ss")
+                : '';
+
+            // Compute work hours
+            let workHours = '';
+            if (a.clockIn && a.clockOut) {
+                const mins = moment(a.clockOut).diff(moment(a.clockIn), 'minutes');
+                const h = Math.floor(Math.abs(mins) / 60);
+                const m = Math.abs(mins) % 60;
+                workHours = `${h}h ${m}m`;
+            }
+
+            return [
+                `"${emp?.employeeName || ''}"`,
+                `"${emp?.employeeEmail || ''}"`,
+                `"${emp?.organizationCode || ''}"`,
+                `"${emp?.organization?.organizationName || ''}"`,
+                `"${emp?.department?.name || 'Unassigned'}"`,
+                `"${dateStr}"`,
+                `"${clockIn}"`,
+                `"${clockOut}"`,
+                `"${a.finalRemark || a.remark || ''}"`,
+                `"${a.isLate ? 'Yes' : 'No'}"`,
+                `"${a.isEarlyOut ? 'Yes' : 'No'}"`,
+                `"${workHours}"`
+            ].join(',');
+        });
+
+        const csv = [headers.join(','), ...rows].join('\n');
+
+        const fromStr = moment(start).format("DDMMYYYY");
+        const toStr = moment(end).format("DDMMYYYY");
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="attendance_${fromStr}_${toStr}.csv"`);
+        res.status(200).send(csv);
+    } catch (error) {
+        console.error(error);
+        res.status(500).send({ message: "Internal Server Error" });
+    }
+});
+
 module.exports = router;
 

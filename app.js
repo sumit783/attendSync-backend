@@ -31,6 +31,7 @@ const supportRoutes = require('./routes/supportRoutes');
 const superAdminRoutes = require('./routes/superAdminRoutes');
 const groupDashboardRoutes = require('./routes/groupDashboardRoutes');
 const reportRoutes = require('./routes/reportRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
 // const AbsenceMarker = require('./Handlers/AbsenceHandlers');
 // Import the cron jobs so they start running
 require('./Handlers/cronJobs'); // This will execute and schedule your cron jobs
@@ -115,6 +116,7 @@ app.use(compression());
 app.use('/api/organization', organizationAuth);
 app.use('/api/organization', organizationProfile);
 app.use('/api/organization', organizationManagement);
+app.use('/api/organization/analytics', analyticsRoutes);
 app.use('/api/organization/shifts', shiftManagement);
 app.use('/api/employee', employeeManagement);
 app.use('/api/employee', employeeAuth);
