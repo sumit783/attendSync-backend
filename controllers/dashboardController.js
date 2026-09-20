@@ -1,0 +1,221 @@
+const prisma = require('../prisma/client');
+
+exports.getOverviewStats = async (req, res) => {
+  // #swagger.tags = ['Dashboard']
+  try {
+    const organizationId = req.organizationId;
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { organizationCode: true, inTime: true }
+    });
+
+    if (!organization) {
+      return res.status(404).json({ message: 'Organization not found' });
+    }
+
+    const currentDate = new Date();
+    currentDate.setHours(0, 0, 0, 0);
+    const nextDate = new Date(currentDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+
+    // 1. Total Employees
+    const totalEmployees = await prisma.employee.count({
+      where: {
+        OR: [
+          { organizationCode: organization.organizationCode },
+          { history: { some: { organizationCode: organization.organizationCode } } }
+        ]
+      }
+    });
+
+    // 2. Attendances Today
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        organizationCode: organization.organizationCode,
+        date: { gte: currentDate, lt: nextDate }
+      },
+      include: {
+        sessions: true,
+        employee: {
+          select: { shift: { select: { startTime: true } } }
+        }
+      }
+    });
+
+    const present = attendances.length;
+    const absent = Math.max(0, totalEmployees - present);
+
+    // Calculate Late
+    const orgInTimeStr = organization.inTime || '09:00';
+    let late = 0;
+
+    attendances.forEach(a => {
+      if (!a.sessions || a.sessions.length === 0) return;
+      const firstSession = [...a.sessions].sort((s1, s2) => new Date(s1.clockInTime) - new Date(s2.clockInTime))[0];
+      const clockInDate = new Date(firstSession.clockInTime);
+      
+      const expectedInTime = new Date(currentDate);
+      const inTimeStr = a.employee?.shift?.startTime || orgInTimeStr;
+      const [hours, minutes] = inTimeStr.split(':');
+      expectedInTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+
+      if (clockInDate > expectedInTime) {
+        late++;
+      }
+    });
+
+    const presentPercent = totalEmployees > 0 ? ((present / totalEmployees) * 100).toFixed(1) : '0.0';
+    const absentPercent = totalEmployees > 0 ? ((absent / totalEmployees) * 100).toFixed(1) : '0.0';
+    const latePercent = totalEmployees > 0 ? ((late / totalEmployees) * 100).toFixed(1) : '0.0';
+
+    res.status(200).json({
+      total: totalEmployees,
+      present,
+      absent,
+      late,
+      presentPercent,
+      absentPercent,
+      latePercent
+    });
+  } catch (error) {
+    console.error('Error fetching overview stats:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+};
+
+exports.getPayrollDistribution = async (req, res) => {
+  // #swagger.tags = ['Dashboard']
+  try {
+    const organizationId = req.organizationId;
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { organizationCode: true }
+    });
+
+    if (!organization) return res.status(404).json({ message: 'Organization not found' });
+
+    const employees = await prisma.employee.findMany({
+      where: {
+        OR: [
+          { organizationCode: organization.organizationCode },
+          { history: { some: { organizationCode: organization.organizationCode } } }
+        ]
+      },
+      include: {
+        department: { select: { name: true } }
+      }
+    });
+
+    const deptPayrollMap = new Map();
+    let totalMonthlyPayroll = 0;
+
+    employees.forEach(emp => {
+      const deptName = emp.department?.name || 'General';
+      const rawSal = Number(emp.salary ?? 0);
+      const sal = isNaN(rawSal) || rawSal <= 0 ? 30000 : rawSal;
+
+      totalMonthlyPayroll += sal;
+
+      const current = deptPayrollMap.get(deptName) || { totalSalary: 0, count: 0 };
+      deptPayrollMap.set(deptName, {
+        totalSalary: current.totalSalary + sal,
+        count: current.count + 1
+      });
+    });
+
+    const PALETTE_COLORS = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#6366f1', '#f97316'];
+    
+    const salaryPieData = Array.from(deptPayrollMap.entries()).map(([name, data], idx) => ({
+      name,
+      value: data.totalSalary,
+      count: data.count,
+      color: PALETTE_COLORS[idx % PALETTE_COLORS.length],
+      percent: totalMonthlyPayroll > 0 ? Math.round((data.totalSalary / totalMonthlyPayroll) * 100) : 0,
+    })).sort((a, b) => b.value - a.value);
+
+    res.status(200).json({
+      totalMonthlyPayroll,
+      salaryPieData
+    });
+  } catch (error) {
+    console.error('Error fetching payroll distribution:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+};
+
+exports.getExpenseDistribution = async (req, res) => {
+  // #swagger.tags = ['Dashboard']
+  try {
+    const organizationId = req.organizationId;
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { organizationCode: true }
+    });
+
+    if (!organization) return res.status(404).json({ message: 'Organization not found' });
+
+    const expenses = await prisma.expense.findMany({
+      where: { organizationCode: organization.organizationCode }
+    });
+
+    let totalExpenseAmount = 0;
+    const categoryMap = new Map();
+    const statusMap = new Map();
+    const expenseStats = { PENDING: 0, APPROVED: 0, REJECTED: 0, PAID: 0 };
+
+    expenses.forEach(item => {
+      const amt = Number(item.amount || 0);
+      totalExpenseAmount += amt;
+
+      const cat = item.type || 'General';
+      const catCurr = categoryMap.get(cat) || { amount: 0, count: 0 };
+      categoryMap.set(cat, { amount: catCurr.amount + amt, count: catCurr.count + 1 });
+
+      const status = item.status || 'PENDING';
+      if (expenseStats[status] !== undefined) expenseStats[status]++;
+
+      // Map DB enum status to Pascal case for frontend
+      const statusPascal = status.charAt(0) + status.slice(1).toLowerCase();
+      const statCurr = statusMap.get(statusPascal) || { amount: 0, count: 0 };
+      statusMap.set(statusPascal, { amount: statCurr.amount + amt, count: statCurr.count + 1 });
+    });
+
+    // Fallback if no items yet, matching frontend placeholder
+    if (totalExpenseAmount === 0 && expenses.length === 0) {
+      categoryMap.set('Travel & Commute', { amount: 45000, count: 6 });
+      categoryMap.set('Office Supplies', { amount: 28000, count: 4 });
+      categoryMap.set('Meals & Client', { amount: 18500, count: 3 });
+      categoryMap.set('Tech & Hardware', { amount: 34000, count: 2 });
+      totalExpenseAmount = 125500;
+    }
+
+    const PALETTE_COLORS = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#6366f1', '#f97316'];
+    const EXPENSE_STATUS_COLORS = { Approved: '#10b981', Pending: '#f59e0b', Paid: '#3b82f6', Rejected: '#ef4444', Other: '#94a3b8' };
+
+    const expensePieDataCategory = Array.from(categoryMap.entries()).map(([name, data], idx) => ({
+      name,
+      value: data.amount,
+      count: data.count,
+      color: PALETTE_COLORS[idx % PALETTE_COLORS.length],
+      percent: totalExpenseAmount > 0 ? Math.round((data.amount / totalExpenseAmount) * 100) : 0,
+    })).sort((a, b) => b.value - a.value);
+
+    const expensePieDataStatus = Array.from(statusMap.entries()).map(([name, data]) => ({
+      name,
+      value: data.amount,
+      count: data.count,
+      color: EXPENSE_STATUS_COLORS[name] || '#94a3b8',
+      percent: totalExpenseAmount > 0 ? Math.round((data.amount / totalExpenseAmount) * 100) : 0,
+    })).sort((a, b) => b.value - a.value);
+
+    res.status(200).json({
+      totalExpenseAmount,
+      expenseStats,
+      expensePieDataCategory,
+      expensePieDataStatus
+    });
+  } catch (error) {
+    console.error('Error fetching expense distribution:', error);
+    res.status(500).json({ message: 'Internal Server Error' });
+  }
+};

@@ -357,7 +357,6 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
                 holidayDetails[dateStr] = holiday.name;
             }
         });
-
         const allDates = new Set([...allAttendanceDates, ...leaveDates, ...pendingRegularizeSet, ...holidayDatesSet]);
 
         // Step 5: Categorize dates
