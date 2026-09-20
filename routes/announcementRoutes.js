@@ -205,4 +205,49 @@ router.get('/:id/replies', authenticateAdmin, requireOrganizationAccess, announc
  */
 router.post('/:id/reply', authenticateJWT, announcementController.replyToAnnouncement);
 
+/**
+ * @swagger
+ * /api/announcements/replies/{replyId}/read:
+ *   patch:
+ *     summary: Mark a reply as read (Admin)
+ *     tags: [Announcement]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: replyId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Reply marked as read
+ *       404:
+ *         description: Reply not found
+ */
+router.patch('/replies/:replyId/read', authenticateAdmin, requireOrganizationAccess, announcementController.markReplyAsRead);
+
+/**
+ * @swagger
+ * /api/announcements/{id}/replies/read-all:
+ *   patch:
+ *     summary: Mark all replies as read for an announcement (Admin)
+ *     tags: [Announcement]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: All replies marked as read
+ *       404:
+ *         description: Announcement not found
+ */
+router.patch('/:id/replies/read-all', authenticateAdmin, requireOrganizationAccess, announcementController.markAllRepliesAsRead);
+
 module.exports = router;
+

@@ -263,6 +263,7 @@ model AnnouncementReply {
   employeeId      String
   employee        Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   message         String         @db.LongText
+  isRead          Boolean        @default(false)
   createdAt       DateTime       @default(now())
 }
 

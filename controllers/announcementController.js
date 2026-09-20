@@ -280,7 +280,13 @@ exports.replyToAnnouncement = async (req, res) => {
             data: {
                 announcementId: id,
                 employeeId,
-                message
+                message,
+                isRead: false
+            },
+            include: {
+                employee: {
+                    select: { id: true, employeeName: true, profilePic: true }
+                }
             }
         });
 
@@ -290,3 +296,60 @@ exports.replyToAnnouncement = async (req, res) => {
         res.status(500).send({ message: 'Internal server error', error: error.message });
     }
 };
+
+exports.markReplyAsRead = async (req, res) => {
+    try {
+        const organizationId = req.organizationId;
+        const { replyId } = req.params;
+
+        const reply = await prisma.announcementReply.findUnique({
+            where: { id: replyId },
+            include: { announcement: true }
+        });
+
+        if (!reply || reply.announcement.organizationId !== organizationId) {
+            return res.status(404).send({ message: 'Reply not found.' });
+        }
+
+        const updatedReply = await prisma.announcementReply.update({
+            where: { id: replyId },
+            data: { isRead: true },
+            include: {
+                employee: {
+                    select: { id: true, employeeName: true, profilePic: true }
+                }
+            }
+        });
+
+        res.status(200).send({ message: 'Reply marked as read.', reply: updatedReply });
+    } catch (error) {
+        console.error('Error marking reply as read:', error);
+        res.status(500).send({ message: 'Internal server error', error: error.message });
+    }
+};
+
+exports.markAllRepliesAsRead = async (req, res) => {
+    try {
+        const organizationId = req.organizationId;
+        const { id } = req.params; // announcement id
+
+        const announcement = await prisma.announcement.findFirst({
+            where: { id, organizationId }
+        });
+
+        if (!announcement) {
+            return res.status(404).send({ message: 'Announcement not found.' });
+        }
+
+        const result = await prisma.announcementReply.updateMany({
+            where: { announcementId: id, isRead: false },
+            data: { isRead: true }
+        });
+
+        res.status(200).send({ message: 'All replies marked as read.', count: result.count });
+    } catch (error) {
+        console.error('Error marking all replies as read:', error);
+        res.status(500).send({ message: 'Internal server error', error: error.message });
+    }
+};
+

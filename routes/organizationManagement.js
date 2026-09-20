@@ -509,8 +509,189 @@ router.post('/employees/:employeeId/reset-device', authenticateAdmin, requireOrg
   }
 });
 
+// ================== Update an Employee ==================
+/**
+ * @swagger
+ * /api/organization/employees/{employeeId}:
+ *   put:
+ *     summary: Update an employee (Admin only)
+ *     tags: [All Company]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: employeeId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID of the employee to update
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               employeeName:
+ *                 type: string
+ *               employeeEmail:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               role:
+ *                 type: string
+ *                 enum: [Employee, Manager, Admin]
+ *               status:
+ *                 type: string
+ *                 enum: [active, inactive]
+ *               salary:
+ *                 type: number
+ *               shiftId:
+ *                 type: string
+ *                 nullable: true
+ *               departmentId:
+ *                 type: string
+ *                 nullable: true
+ *               customRoleId:
+ *                 type: string
+ *                 nullable: true
+ *               designationIds:
+ *                 type: array
+ *                 items:
+ *                   type: string
+ *               profilePic:
+ *                 type: string
+ *               isVerified:
+ *                 type: boolean
+ *     responses:
+ *       200:
+ *         description: Employee updated successfully
+ *       400:
+ *         description: Invalid input or email already in use
+ *       404:
+ *         description: Employee not found
+ */
+const updateEmployeeHandler = async (req, res) => {
+  // #swagger.tags = ['All Company']
+  try {
+    const organizationId = req.organizationId;
+    const employeeId = req.params.employeeId || req.params.id;
+
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId }
+    });
+
+    if (!organization) {
+      return res.status(404).send({ message: 'Organization not found' });
+    }
+
+    const existingEmployee = await prisma.employee.findFirst({
+      where: {
+        id: employeeId,
+        OR: [
+          { organizationId: organization.id },
+          { organizationCode: organization.organizationCode }
+        ]
+      }
+    });
+
+    if (!existingEmployee) {
+      return res.status(404).send({ message: 'Employee not found in your organization' });
+    }
+
+    const {
+      employeeName,
+      employeeEmail,
+      password,
+      role,
+      status,
+      salary,
+      shiftId,
+      departmentId,
+      customRoleId,
+      designationIds,
+      profilePic,
+      isVerified
+    } = req.body;
+
+    // Check if email is changing and already in use
+    if (employeeEmail && employeeEmail.toLowerCase() !== existingEmployee.employeeEmail.toLowerCase()) {
+      const emailInUse = await prisma.employee.findUnique({
+        where: { employeeEmail }
+      });
+      if (emailInUse) {
+        return res.status(400).send({ message: 'Employee with this email already exists' });
+      }
+    }
+
+    const updateData = {};
+
+    if (employeeName !== undefined) updateData.employeeName = employeeName;
+    if (employeeEmail !== undefined) updateData.employeeEmail = employeeEmail;
+    if (password) {
+      updateData.password = await bcrypt.hash(password, 10);
+    }
+    if (role !== undefined) updateData.role = role;
+    if (status !== undefined) updateData.status = status;
+    if (profilePic !== undefined) updateData.profilePic = profilePic;
+    if (salary !== undefined) updateData.salary = salary !== null ? parseFloat(salary) : 0;
+    if (isVerified !== undefined) updateData.isVerified = Boolean(isVerified);
+
+    if (shiftId !== undefined) {
+      updateData.shiftId = shiftId || null;
+    }
+    if (departmentId !== undefined) {
+      updateData.departmentId = departmentId || null;
+    }
+    if (customRoleId !== undefined) {
+      updateData.customRoleId = customRoleId || null;
+    }
+    if (designationIds !== undefined && Array.isArray(designationIds)) {
+      updateData.designations = {
+        set: designationIds.map(id => ({ id }))
+      };
+    }
+
+    const updatedEmployee = await prisma.employee.update({
+      where: { id: employeeId },
+      data: updateData,
+      include: {
+        department: { select: { id: true, name: true } },
+        customRole: { select: { id: true, name: true } },
+        shift: { select: { id: true, name: true, startTime: true, endTime: true, weekOffs: true } },
+        designations: { select: { id: true, name: true } }
+      }
+    });
+
+    // Record status change in employment history if status was updated
+    if (status && status !== existingEmployee.status) {
+      await prisma.employmentHistory.create({
+        data: {
+          employeeId,
+          organizationCode: organization.organizationCode,
+          status,
+          ...(status === 'inactive' ? { leftAt: new Date() } : {})
+        }
+      });
+    }
+
+    const { password: _, ...employeeResponse } = updatedEmployee;
+
+    res.status(200).send({
+      message: 'Employee updated successfully',
+      employee: employeeResponse
+    });
+  } catch (error) {
+    console.error('Error updating employee:', error);
+    res.status(500).send({ message: 'Server error', error: error.message });
+  }
+};
+
+router.put('/employees/:employeeId', authenticateAdmin, requireOrganizationAccess, updateEmployeeHandler);
+router.put('/employee/:employeeId', authenticateAdmin, requireOrganizationAccess, updateEmployeeHandler);
+
 // ================== Delete an Employee ==================
-router.delete('/employee/:employeeId', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+const deleteEmployeeHandler = async (req, res) => {
     // #swagger.tags = ['All Company']
 
   try {
@@ -519,7 +700,7 @@ router.delete('/employee/:employeeId', authenticateAdmin, requireOrganizationAcc
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
-    const { employeeId } = req.params;
+    const employeeId = req.params.employeeId || req.params.id;
 
     const employee = await prisma.employee.findFirst({
       where: {
@@ -548,10 +729,14 @@ router.delete('/employee/:employeeId', authenticateAdmin, requireOrganizationAcc
 
     res.status(200).send({ message: 'Employee deleted successfully' });
   } catch (error) {
-    console.error('Error in /employee/:employeeId DELETE:', error);
+    console.error('Error in delete employee:', error);
     res.status(500).send({ message: 'Server error', error: error.message });
   }
-});
+};
+
+router.delete('/employee/:employeeId', authenticateAdmin, requireOrganizationAccess, deleteEmployeeHandler);
+router.delete('/employees/:employeeId', authenticateAdmin, requireOrganizationAccess, deleteEmployeeHandler);
+
 
 // ================== Get Employees Status (Present, Late, Early Leavers) ==================
 router.get('/employees-status', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
