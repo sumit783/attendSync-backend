@@ -19,6 +19,20 @@ router.get('/employee/notifications', authenticateJWT, async (req, res) => {
                 userId: employeeId,
                 target: 'Employee'
             },
+            include: { 
+                announcement: {
+                    include: {
+                        replies: {
+                            include: {
+                                employee: {
+                                    select: { employeeName: true }
+                                }
+                            },
+                            orderBy: { createdAt: 'asc' }
+                        }
+                    }
+                } 
+            },
             orderBy: { createdAt: 'desc' }
         });
 

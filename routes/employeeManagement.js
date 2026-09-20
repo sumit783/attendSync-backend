@@ -36,9 +36,18 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
     // #swagger.tags = ['Attendance and Employee Management']
 
     try {
-        const { wifiSSID, wifiBSSID, deviceId, ipAddress, employeeLatitude, employeeLongitude, isIOS } = req.body;
-        const currentDate = moment().tz('Asia/Kolkata').format('YYYY-MM-DD');
-        const currentLocalTime = moment().tz('Asia/Kolkata').toDate();
+        const { wifiSSID, wifiBSSID, deviceId, ipAddress, employeeLatitude, employeeLongitude, isIOS, date, time } = req.body;
+
+        let currentLocalTime = moment().tz('Asia/Kolkata').toDate();
+        let currentDate = moment().tz('Asia/Kolkata').format('YYYY-MM-DD');
+
+        if (date && time) {
+            currentLocalTime = moment.tz(`${date} ${time}`, ['YYYY-MM-DD HH:mm', 'YYYY-MM-DD HH:mm:ss'], 'Asia/Kolkata').toDate();
+            currentDate = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').format('YYYY-MM-DD');
+        } else if (date) {
+            currentDate = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').format('YYYY-MM-DD');
+            currentLocalTime = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').toDate();
+        }
 
         const employee = await prisma.employee.findUnique({
             where: { id: req.user.id },
@@ -256,7 +265,7 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
 
         const organizationCode = employee.organizationCode;
 
-        const [attendances, leaves, pendingRegularizations] = await Promise.all([
+        const [attendances, leaves, pendingRegularizations, holidays] = await Promise.all([
             prisma.attendance.findMany({
                 where: {
                     employeeId: employeeId,
@@ -296,9 +305,18 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
                 select: {
                     attendanceDate: true
                 }
+            }),
+            prisma.holiday.findMany({
+                where: {
+                    organizationId: employee.organizationId
+                },
+                select: {
+                    startDate: true,
+                    endDate: true,
+                    name: true
+                }
             })
         ]);
-        //console.log(leaves)
 
         // Step 4: Build maps of attendance and leave dates
         const attendanceMap = {};
@@ -328,7 +346,19 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
             pendingRegularizeSet.add(moment(reg.attendanceDate).format('YYYY-MM-DD'));
         });
 
-        const allDates = new Set([...allAttendanceDates, ...leaveDates, ...pendingRegularizeSet]);
+        const holidayDatesSet = new Set();
+        const holidayDetails = {};
+        holidays.forEach(holiday => {
+            const hStart = moment(holiday.startDate);
+            const hEnd = moment(holiday.endDate);
+            for (let m = moment(hStart); m.diff(hEnd, 'days') <= 0; m.add(1, 'days')) {
+                const dateStr = m.format('YYYY-MM-DD');
+                holidayDatesSet.add(dateStr);
+                holidayDetails[dateStr] = holiday.name;
+            }
+        });
+
+        const allDates = new Set([...allAttendanceDates, ...leaveDates, ...pendingRegularizeSet, ...holidayDatesSet]);
 
         // Step 5: Categorize dates
         const result = {
@@ -340,6 +370,8 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
             onTimeDates: [],
             absentDates: [],
             leaveDates: [],
+            holidayDates: Array.from(holidayDatesSet),
+            holidayDetails: holidayDetails,
             regularizedDates: [],
             pendingRegularizeDates: [],
             weekOffDays: employee.shift && employee.shift.weekOffs ? employee.shift.weekOffs.split(',') : []
@@ -363,6 +395,8 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
                 }
             } else if (leaveDates.has(date)) {
                 result.leaveDates.push(date);
+            } else if (holidayDatesSet.has(date)) {
+                // Do not mark as absent if it is a holiday
             } else {
                 result.absentDates.push(date);
             }
@@ -371,6 +405,100 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
         res.status(200).json(result);
     } catch (err) {
         console.error('Error fetching attendance status:', err);
+        res.status(500).json({ message: 'Server Error' });
+    }
+});
+
+router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+    try {
+        const employeeId = req.user.id;
+        const employee = await prisma.employee.findUnique({
+            where: { id: employeeId },
+            include: { shift: true }
+        });
+        if (!employee) return res.status(404).json({ message: 'Employee not found.' });
+
+        const moment = require('moment-timezone');
+        const now = moment().tz('Asia/Kolkata');
+        const currentMonthStart = now.clone().startOf('month');
+        const currentMonthEnd = now.clone().endOf('month');
+        const today = now.clone().startOf('day');
+
+        // Fetch attendances for current month
+        const attendances = await prisma.attendance.findMany({
+            where: {
+                employeeId,
+                organizationCode: employee.organizationCode,
+                date: { gte: currentMonthStart.toDate(), lte: currentMonthEnd.toDate() }
+            }
+        });
+
+        const organization = await prisma.organization.findUnique({
+            where: { id: employee.organizationId },
+            select: { holidays: { where: { startDate: { lte: currentMonthEnd.toDate() }, endDate: { gte: currentMonthStart.toDate() } }, select: { startDate: true, endDate: true } } }
+        });
+
+        const holidayDates = new Set();
+        for (const h of (organization?.holidays || [])) {
+            let d = moment(h.startDate);
+            const end = moment(h.endDate);
+            while (d.isSameOrBefore(end, 'day')) {
+                holidayDates.add(d.format('YYYY-MM-DD'));
+                d.add(1, 'day');
+            }
+        }
+
+        const weekOffNames = employee.shift?.weekOffs ? employee.shift.weekOffs.split(',').map(d => d.trim().toLowerCase()) : [];
+        let expectedWorkingDays = 0;
+        let actualWorkingDays = 0;
+        let completedWorkingHours = 0;
+        
+        const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'];
+        for (const a of attendances) {
+            if (PRESENT_REMARKS.includes(a.finalRemark)) {
+                if (moment(a.date).isSameOrBefore(today, 'day')) {
+                    actualWorkingDays++;
+                }
+            }
+            if (a.totalHours) completedWorkingHours += a.totalHours;
+            if (a.extraHours) completedWorkingHours += a.extraHours;
+        }
+
+        let currentDay = currentMonthStart.clone();
+        const maxDay = currentMonthEnd;
+
+        while (currentDay.isSameOrBefore(maxDay, 'day')) {
+            const dateStr = currentDay.format('YYYY-MM-DD');
+            const dayName = currentDay.format('dddd').toLowerCase();
+
+            if (!weekOffNames.includes(dayName) && !holidayDates.has(dateStr)) {
+                expectedWorkingDays++;
+            }
+            currentDay.add(1, 'day');
+        }
+
+        const shiftStart = employee.shift?.startTime ? moment(employee.shift.startTime, 'HH:mm') : null;
+        const shiftEnd = employee.shift?.endTime ? moment(employee.shift.endTime, 'HH:mm') : null;
+        let dailyShiftHours = 8; // Default
+        if (shiftStart && shiftEnd) {
+            dailyShiftHours = shiftEnd.diff(shiftStart, 'hours', true);
+            if (dailyShiftHours < 0) dailyShiftHours += 24; // overnight shift
+        }
+        
+        const expectedWorkingHours = parseFloat((expectedWorkingDays * dailyShiftHours).toFixed(2));
+        completedWorkingHours = parseFloat(completedWorkingHours.toFixed(2));
+        const salary = employee.salary || 0;
+
+        res.status(200).json({
+            expectedWorkingDays,
+            actualWorkingDays,
+            expectedWorkingHours,
+            completedWorkingHours,
+            salary
+        });
+    } catch (err) {
+        console.error('Error fetching dashboard summary:', err);
         res.status(500).json({ message: 'Server Error' });
     }
 });
@@ -525,16 +653,23 @@ router.get('/attendance/today', authenticateJWT, async (req, res) => {
         const startOfDay = moment().startOf('day').toDate();
         const endOfDay = moment().endOf('day').toDate();
 
-        // Fetch today's attendance record
+        // Fetch the most recent attendance record
         const attendanceRecord = await prisma.attendance.findFirst({
             where: {
-                employeeId: employee.id,
-                date: { gte: startOfDay, lte: endOfDay }
+                employeeId: employee.id
             },
+            orderBy: { date: 'desc' },
             include: { sessions: true }
         });
 
         if (!attendanceRecord) {
+            return res.status(200).json({ message: 'No attendance record found for today.' });
+        }
+
+        const isToday = attendanceRecord.date >= startOfDay && attendanceRecord.date <= endOfDay;
+        const hasOpenSession = attendanceRecord.sessions.some(session => !session.clockOutTime);
+
+        if (!isToday && !hasOpenSession) {
             return res.status(200).json({ message: 'No attendance record found for today.' });
         }
 
@@ -951,6 +1086,133 @@ router.post('/expenses', authenticateJWT, async (req, res) => {
 
 /**
  * @swagger
+ * /api/employee/expenses/{id}:
+ *   put:
+ *     summary: Edit a pending expense
+ *     tags: [Attendance and Employee Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               title:
+ *                 type: string
+ *               type:
+ *                 type: string
+ *               amount:
+ *                 type: number
+ *               description:
+ *                 type: string
+ *               billUrl:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Expense updated successfully
+ *       400:
+ *         description: Bad request or not pending
+ *       404:
+ *         description: Expense not found
+ */
+router.put('/expenses/:id', authenticateJWT, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { title, type, amount, billUrl, description } = req.body;
+
+    const expense = await prisma.expense.findUnique({
+      where: { id }
+    });
+
+    if (!expense || expense.employeeId !== req.user.id) {
+      return res.status(404).json({ message: 'Expense not found.' });
+    }
+    
+    if (expense.status !== 'PENDING') {
+      return res.status(400).json({ message: 'Only pending expenses can be edited.' });
+    }
+
+    if (!title || !type || !amount) {
+      return res.status(400).json({ message: 'title, type, and amount are required.' });
+    }
+
+    const updatedExpense = await prisma.expense.update({
+      where: { id },
+      data: {
+        title: title.trim(),
+        type: type.trim(),
+        amount: parseFloat(amount),
+        billUrl: billUrl || expense.billUrl,
+        description: description || null,
+      }
+    });
+
+    return res.status(200).json({ message: 'Expense updated successfully.', expense: updatedExpense });
+  } catch (error) {
+    console.error('Error updating expense:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/employee/expenses/{id}:
+ *   delete:
+ *     summary: Delete a pending expense
+ *     tags: [Attendance and Employee Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Expense deleted successfully
+ *       400:
+ *         description: Bad request or not pending
+ *       404:
+ *         description: Expense not found
+ */
+router.delete('/expenses/:id', authenticateJWT, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const expense = await prisma.expense.findUnique({
+      where: { id }
+    });
+
+    if (!expense || expense.employeeId !== req.user.id) {
+      return res.status(404).json({ message: 'Expense not found.' });
+    }
+
+    if (expense.status !== 'PENDING') {
+      return res.status(400).json({ message: 'Only pending expenses can be deleted.' });
+    }
+
+    await prisma.expense.delete({
+      where: { id }
+    });
+
+    return res.status(200).json({ message: 'Expense deleted successfully.' });
+  } catch (error) {
+    console.error('Error deleting expense:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+/**
+ * @swagger
  * /api/employee/expenses:
  *   get:
  *     summary: Get my submitted expenses
@@ -1027,6 +1289,281 @@ router.get('/expenses', authenticateJWT, async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching employee expenses:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// ================== Employee Performance Report ==================
+
+/**
+ * @swagger
+ * /api/employee/performance-report:
+ *   get:
+ *     summary: Get my performance report
+ *     tags: [Attendance and Employee Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: range
+ *         schema:
+ *           type: string
+ *           enum: [currentMonth, lastMonth, last3Months, last6Months, custom]
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Performance report with scores, monthly hours, and activity summary
+ */
+router.get('/performance-report', authenticateJWT, async (req, res) => {
+  try {
+    const employeeId = req.user.id;
+
+    const employee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: {
+        id: true,
+        employeeName: true,
+        employeeEmail: true,
+        profilePic: true,
+        organizationCode: true,
+        organizationId: true,
+        shift: { select: { name: true, startTime: true, endTime: true, weekOffs: true } }
+      }
+    });
+
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found.' });
+    }
+
+    // ── Date range configuration ───────────────────────────────────────
+    const { range, startDate, endDate } = req.query;
+    const moment = require('moment-timezone');
+    const now = moment().tz('Asia/Kolkata');
+    let rangeStart, rangeEnd;
+
+    if (range === 'currentMonth') {
+      rangeStart = now.clone().startOf('month').toDate();
+      rangeEnd = now.clone().endOf('month').toDate();
+    } else if (range === 'lastMonth') {
+      rangeStart = now.clone().subtract(1, 'month').startOf('month').toDate();
+      rangeEnd = now.clone().subtract(1, 'month').endOf('month').toDate();
+    } else if (range === 'last3Months') {
+      rangeStart = now.clone().subtract(2, 'months').startOf('month').toDate();
+      rangeEnd = now.clone().endOf('month').toDate();
+    } else if (range === 'custom' && startDate && endDate) {
+      rangeStart = moment(startDate).startOf('day').toDate();
+      rangeEnd = moment(endDate).endOf('day').toDate();
+    } else {
+      // Default: last 6 months
+      rangeStart = now.clone().subtract(5, 'months').startOf('month').toDate();
+      rangeEnd = now.clone().endOf('month').toDate();
+    }
+
+    // ── Fetch all attendance in range ─────────────────────────────────
+    const attendances = await prisma.attendance.findMany({
+      where: {
+        employeeId,
+        organizationCode: employee.organizationCode,
+        date: { gte: rangeStart, lte: rangeEnd }
+      },
+      select: { date: true, totalHours: true, extraHours: true, finalRemark: true, sessions: { orderBy: { clockInTime: 'asc' }, select: { clockInTime: true } } },
+      orderBy: { date: 'asc' }
+    });
+
+    // ── Fetch tasks ────────────────────────────────────────────────────
+    const [totalTasks, completedTasks] = await Promise.all([
+      prisma.task.count({ where: { employeeId, organizationId: employee.organizationId } }),
+      prisma.task.count({ where: { employeeId, organizationId: employee.organizationId, status: 'COMPLETED' } })
+    ]);
+
+    // ── Fetch leaves this period ───────────────────────────────────────
+    const approvedLeaves = await prisma.leave.count({
+      where: { employeeId, organizationCode: employee.organizationCode, status: 'Approved', startDate: { gte: rangeStart } }
+    });
+
+    // ── Build monthly hours breakdown ──────────────────────────────────
+    const monthlyMap = {};
+    let m = moment(rangeStart).startOf('month');
+    const mEnd = moment(rangeEnd).endOf('month');
+    
+    while (m.isSameOrBefore(mEnd)) {
+      const key = m.format('YYYY-MM');
+      monthlyMap[key] = { month: m.format('MMM'), hours: 0, present: 0, late: 0 };
+      m.add(1, 'month');
+    }
+
+    const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'];
+    let totalHoursAll = 0;
+    let totalOvertimeAll = 0;
+    let lateArrivals = 0;
+    let earlyDepartures = 0;
+    let presentDays = 0;
+
+    // Determine shift start for punctuality check
+    const shiftStartParts = employee.shift?.startTime ? employee.shift.startTime.split(':').map(Number) : null;
+
+    for (const a of attendances) {
+      const mKey = moment(a.date).format('YYYY-MM');
+      if (!monthlyMap[mKey]) continue;
+
+      monthlyMap[mKey].hours += a.totalHours || 0;
+      totalHoursAll += a.totalHours || 0;
+      totalOvertimeAll += a.extraHours || 0;
+
+      if (PRESENT_REMARKS.includes(a.finalRemark)) {
+        presentDays++;
+        monthlyMap[mKey].present++;
+
+        // Punctuality: check if first clock-in was after shift start
+        if (shiftStartParts && a.sessions.length > 0) {
+          const clockIn = moment(a.sessions[0].clockInTime).tz('Asia/Kolkata');
+          const shiftStartMins = shiftStartParts[0] * 60 + shiftStartParts[1];
+          const clockInMins = clockIn.hours() * 60 + clockIn.minutes();
+          // Grace period: 10 minutes
+          if (clockInMins > shiftStartMins + 10) {
+            lateArrivals++;
+            monthlyMap[mKey].late++;
+          }
+        }
+      }
+
+      if (a.finalRemark === 'Left Early') earlyDepartures++;
+    }
+
+    // ── Calculate True Absent Days (Handling missing data) ────────────
+    const organization = await prisma.organization.findUnique({
+      where: { id: employee.organizationId },
+      select: { holidays: { where: { startDate: { lte: rangeEnd }, endDate: { gte: rangeStart } }, select: { startDate: true, endDate: true } } }
+    });
+
+    const holidayDates = new Set();
+    for (const h of (organization?.holidays || [])) {
+      let d = moment(h.startDate);
+      const end = moment(h.endDate);
+      while (d.isSameOrBefore(end, 'day')) {
+        holidayDates.add(d.format('YYYY-MM-DD'));
+        d.add(1, 'day');
+      }
+    }
+
+    const attendanceMap = {};
+    for (const a of attendances) {
+      attendanceMap[moment(a.date).format('YYYY-MM-DD')] = a.finalRemark;
+    }
+
+    let expectedWorkingDays = 0;
+    let absentDays = 0;
+    const today = now.clone().startOf('day');
+    const weekOffNames = employee.shift?.weekOffs
+      ? employee.shift.weekOffs.split(',').map(d => d.trim().toLowerCase())
+      : [];
+
+    let currentDay = moment(rangeStart);
+    const maxDay = moment.min(moment(rangeEnd), today); // Don't count future days
+
+    while (currentDay.isSameOrBefore(maxDay, 'day')) {
+      const dateStr = currentDay.format('YYYY-MM-DD');
+      const dayName = currentDay.format('dddd').toLowerCase();
+
+      // If not weekoff and not holiday
+      if (!weekOffNames.includes(dayName) && !holidayDates.has(dateStr)) {
+        expectedWorkingDays++;
+        
+        const remark = attendanceMap[dateStr];
+        // If there's no record, or the record says Absent, it's an absent day
+        if (!remark || !PRESENT_REMARKS.includes(remark)) {
+          absentDays++;
+        }
+      }
+      currentDay.add(1, 'day');
+    }
+
+    // ── Calculate scores ───────────────────────────────────────────────
+    const avgDailyHours = presentDays > 0 ? parseFloat((totalHoursAll / presentDays).toFixed(2)) : 0;
+    const overtimeHours = parseFloat(totalOvertimeAll.toFixed(2));
+
+    // Punctuality score: (present - late) / present * 100
+    const punctualityScore = presentDays > 0
+      ? Math.round(((presentDays - lateArrivals) / presentDays) * 100)
+      : 0;
+
+    // Task completion score
+    const taskScore = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+    // Attendance score (present days out of expected working days)
+    const attendanceScore = expectedWorkingDays > 0 
+      ? Math.max(0, Math.round(((expectedWorkingDays - absentDays) / expectedWorkingDays) * 100))
+      : 0;
+
+    // Overtime score: capped at 100, based on avg overtime vs expected hours (generous scoring)
+    const avgOvertimePerDay = presentDays > 0 ? totalOvertimeAll / presentDays : 0;
+    const overtimeScore = Math.min(100, Math.round(avgOvertimePerDay * 25)); // 4hr+ overtime = 100
+
+    // Consistency: low late arrivals + low early departures
+    const consistencyScore = presentDays > 0
+      ? Math.max(0, Math.round(100 - ((lateArrivals + earlyDepartures) / presentDays) * 100))
+      : 0;
+
+    // Absenteeism rate (% of working days absent over the range)
+    const absenteeismRate = expectedWorkingDays > 0 ? parseFloat(((absentDays / expectedWorkingDays) * 100).toFixed(1)) : 0;
+
+    // Overall score: weighted average
+    const overallScore = Math.round(
+      punctualityScore * 0.30 +
+      attendanceScore  * 0.25 +
+      taskScore        * 0.25 +
+      consistencyScore * 0.20
+    );
+
+    const monthlyHours = Object.values(monthlyMap).map(m => ({
+      month: m.month,
+      hours: parseFloat(m.hours.toFixed(1)),
+      presentDays: m.present,
+      lateDays: m.late
+    }));
+
+    return res.status(200).json({
+      employee: {
+        id: employee.id,
+        employeeName: employee.employeeName,
+        employeeEmail: employee.employeeEmail,
+        profilePic: employee.profilePic,
+        shift: employee.shift?.name || null
+      },
+      scores: {
+        overall: overallScore,
+        punctuality: punctualityScore,
+        attendance: attendanceScore,
+        taskCompletion: taskScore,
+        overtime: overtimeScore,
+        consistency: consistencyScore
+      },
+      kpis: {
+        avgDailyHours,
+        overtimeHours,
+        absenteeismRate,
+        lateArrivals,
+        earlyDepartures,
+        presentDays,
+        absentDays,
+        approvedLeaves
+      },
+      tasks: {
+        total: totalTasks,
+        completed: completedTasks,
+        pending: totalTasks - completedTasks
+      },
+      monthlyHours
+    });
+  } catch (error) {
+    console.error('Error fetching employee performance report:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });

@@ -70,6 +70,17 @@ router.post('/', authenticateAdmin, requireOrganizationAccess, announcementContr
  *         schema:
  *           type: integer
  *         description: Number of items per page
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Search keyword for title or message
+ *       - in: query
+ *         name: date
+ *         schema:
+ *           type: string
+ *           format: date
+ *         description: Filter announcements by creation date (YYYY-MM-DD)
  *     responses:
  *       200:
  *         description: A list of announcements

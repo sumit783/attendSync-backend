@@ -84,10 +84,33 @@ exports.getAnnouncements = async (req, res) => {
         const organizationId = req.organizationId;
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 10;
+        const search = req.query.search || '';
+        const date = req.query.date; // format YYYY-MM-DD
         const skip = (page - 1) * limit;
 
+        const whereClause = { organizationId };
+
+        if (search) {
+            whereClause.OR = [
+                { title: { contains: search } },
+                { message: { contains: search } }
+            ];
+        }
+
+        if (date) {
+            const startDate = new Date(date);
+            startDate.setHours(0, 0, 0, 0);
+            const endDate = new Date(date);
+            endDate.setHours(23, 59, 59, 999);
+            
+            whereClause.createdAt = {
+                gte: startDate,
+                lte: endDate
+            };
+        }
+
         const announcements = await prisma.announcement.findMany({
-            where: { organizationId },
+            where: whereClause,
             include: {
                 _count: {
                     select: { replies: true }
@@ -105,7 +128,7 @@ exports.getAnnouncements = async (req, res) => {
             take: limit
         });
 
-        const totalAnnouncements = await prisma.announcement.count({ where: { organizationId } });
+        const totalAnnouncements = await prisma.announcement.count({ where: whereClause });
 
         res.status(200).send({
             announcements,

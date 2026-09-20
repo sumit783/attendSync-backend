@@ -1897,6 +1897,12 @@
                 },
                 "isIOS": {
                   "example": "any"
+                },
+                "date": {
+                  "example": "any"
+                },
+                "time": {
+                  "example": "any"
                 }
               }
             }
@@ -4361,6 +4367,16 @@
           },
           {
             "name": "limit",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "date",
             "in": "query",
             "type": "string"
           }
