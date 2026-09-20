@@ -33,6 +33,8 @@ function parseTime(time) {
 }
 
 router.post('/clock-in-out', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { wifiSSID, wifiBSSID, deviceId, ipAddress, employeeLatitude, employeeLongitude, isIOS } = req.body;
         const currentDate = moment().tz('Asia/Kolkata').format('YYYY-MM-DD');
@@ -105,22 +107,39 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
         const orgInFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
         const orgOutFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
 
-        const organizationInTime = moment.tz(`${currentDate} ${inTimeStr}`, `YYYY-MM-DD ${orgInFormat}`, 'Asia/Kolkata').utc().toDate();
-        const organizationOutTime = moment.tz(`${currentDate} ${outTimeStr}`, `YYYY-MM-DD ${orgOutFormat}`, 'Asia/Kolkata').utc().toDate();
-
+        const currentMom = moment(currentLocalTime).tz('Asia/Kolkata');
         let shiftStart = moment.tz(`${currentDate} ${inTimeStr}`, `YYYY-MM-DD ${orgInFormat}`, 'Asia/Kolkata');
         let shiftEnd = moment.tz(`${currentDate} ${outTimeStr}`, `YYYY-MM-DD ${orgOutFormat}`, 'Asia/Kolkata');
-        if (shiftEnd.isBefore(shiftStart)) shiftEnd.add(1, 'day');
+        
+        let isOvernight = false;
+        if (shiftEnd.isBefore(shiftStart)) {
+            isOvernight = true;
+            shiftEnd.add(1, 'day');
+        }
+
+        // If it's an overnight shift and the employee is hitting the API after midnight
+        if (isOvernight && currentMom.isBefore(moment.tz(`${currentDate} ${inTimeStr}`, `YYYY-MM-DD ${orgInFormat}`, 'Asia/Kolkata'))) {
+            shiftStart.subtract(1, 'day');
+            shiftEnd.subtract(1, 'day');
+        }
+
+        const organizationInTime = shiftStart.utc().toDate();
+        const organizationOutTime = shiftEnd.utc().toDate();
+
+        // Search window: 12 hours before shift start, to shift end
+        const searchStart = shiftStart.clone().subtract(12, 'hours').toDate();
+        const searchEnd = shiftEnd.clone().add(4, 'hours').toDate();
 
         // Find today's attendance
         let attendanceRecord = await prisma.attendance.findFirst({
             where: {
                 employeeId: employee.id,
                 date: {
-                    gte: shiftStart.startOf('day').toDate(),
-                    lte: shiftEnd.endOf('day').toDate()
+                    gte: searchStart,
+                    lte: searchEnd
                 }
             },
+            orderBy: { date: 'desc' },
             include: { sessions: true }
         });
 
@@ -222,6 +241,8 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
 });
 
 router.get('/employee-calendar', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const employeeId = req.user.id;
 
@@ -355,6 +376,8 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
 });
 
 router.get('/all-present-days', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         // Extract and verify JWT token
         const token = req.headers.authorization?.split(' ')[1];
@@ -388,6 +411,8 @@ router.get('/all-present-days', authenticateJWT, async (req, res) => {
 });
 
 router.get('/profile', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         // Check for the authorization header
         const authHeader = req.headers.authorization;
@@ -435,6 +460,8 @@ router.get('/profile', authenticateJWT, async (req, res) => {
 
 // Route to upload profile picture
 router.post('/upload-profile-pic', authenticateJWT, upload.single('profilePic'), async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const authHeader = req.headers.authorization;
         if (!authHeader) {
@@ -475,6 +502,8 @@ router.post('/upload-profile-pic', authenticateJWT, upload.single('profilePic'),
 });
 
 router.get('/attendance/today', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         // Extract JWT token
         const token = req.headers.authorization?.split(' ')[1];
@@ -555,6 +584,8 @@ router.get('/attendance/today', authenticateJWT, async (req, res) => {
 });
 
 router.get('/attendance/present-nearby', authenticateJWT,async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         console.log("Received Request Body:", req.body);
 
@@ -628,6 +659,8 @@ router.get('/attendance/present-nearby', authenticateJWT,async (req, res) => {
 });
 
 router.get('/attendance/:date', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         // Extract JWT token
         const token = req.headers.authorization?.split(' ')[1];
@@ -750,6 +783,8 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
     }
 });
 router.get('/attendance/weekly', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const token = req.headers.authorization?.split(' ')[1];
         if (!token) return res.status(401).json({ message: 'Authorization token is required.' });
@@ -831,6 +866,169 @@ router.get('/attendance/weekly', authenticateJWT, async (req, res) => {
         console.error('Error in /attendance/weekly:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
+});
+
+// ================== Employee Expense / Bill Reimbursement ==================
+
+/**
+ * @swagger
+ * /api/employee/expenses:
+ *   post:
+ *     summary: Submit a bill/expense for reimbursement
+ *     tags: [Attendance and Employee Management]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - title
+ *               - type
+ *               - amount
+ *             properties:
+ *               title:
+ *                 type: string
+ *               type:
+ *                 type: string
+ *                 example: Travel
+ *               amount:
+ *                 type: number
+ *               billUrl:
+ *                 type: string
+ *                 description: Base64 string or uploaded URL of the bill
+ *               description:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Expense submitted successfully
+ *       400:
+ *         description: Missing required fields
+ */
+router.post('/expenses', authenticateJWT, async (req, res) => {
+  // #swagger.tags = ['Attendance and Employee Management']
+  try {
+    const { title, type, amount, billUrl, description } = req.body;
+
+    if (!title || !type || !amount) {
+      return res.status(400).json({ message: 'title, type, and amount are required.' });
+    }
+
+    if (isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      return res.status(400).json({ message: 'amount must be a positive number.' });
+    }
+
+    const employee = await prisma.employee.findUnique({
+      where: { id: req.user.id },
+      select: { id: true, organizationId: true, organizationCode: true }
+    });
+
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found.' });
+    }
+
+    const expense = await prisma.expense.create({
+      data: {
+        employeeId: employee.id,
+        organizationId: employee.organizationId,
+        organizationCode: employee.organizationCode,
+        title: title.trim(),
+        type: type.trim(),
+        amount: parseFloat(amount),
+        billUrl: billUrl || null,
+        description: description || null,
+      }
+    });
+
+    return res.status(201).json({ message: 'Expense submitted successfully.', expense });
+  } catch (error) {
+    console.error('Error submitting expense:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+/**
+ * @swagger
+ * /api/employee/expenses:
+ *   get:
+ *     summary: Get my submitted expenses
+ *     tags: [Attendance and Employee Management]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: status
+ *         schema:
+ *           type: string
+ *           enum: [PENDING, APPROVED, REJECTED, PAID]
+ *       - in: query
+ *         name: page
+ *         schema:
+ *           type: integer
+ *       - in: query
+ *         name: limit
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: List of employee expenses
+ */
+router.get('/expenses', authenticateJWT, async (req, res) => {
+  // #swagger.tags = ['Attendance and Employee Management']
+  try {
+    const { status, page = 1, limit = 10 } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const where = { employeeId: req.user.id };
+    if (status && status !== 'ALL') {
+      const validStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'PAID'];
+      if (!validStatuses.includes(status.toUpperCase())) {
+        return res.status(400).json({ message: 'Invalid status filter.' });
+      }
+      where.status = status.toUpperCase();
+    }
+
+    const [expenses, total] = await Promise.all([
+      prisma.expense.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limitNum,
+        select: {
+          id: true,
+          title: true,
+          type: true,
+          amount: true,
+          billUrl: true,
+          description: true,
+          status: true,
+          rejectionReason: true,
+          reviewedBy: true,
+          reviewedAt: true,
+          createdAt: true,
+          updatedAt: true,
+        }
+      }),
+      prisma.expense.count({ where })
+    ]);
+
+    return res.status(200).json({
+      expenses,
+      pagination: {
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum)
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching employee expenses:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
 });
 
 module.exports = router;

@@ -27,7 +27,7 @@ const authenticateAdmin = require('../middleware/authenticateAdmin');
  * /api/organization/signup:
  *   post:
  *     summary: Sign up an Admin / Super Admin
- *     tags: [Admin Authentication]
+ *     tags: [All Company]
  *     requestBody:
  *       required: true
  *       content:
@@ -64,7 +64,7 @@ router.post('/signup', signup);
  * /api/organization/login:
  *   post:
  *     summary: Log in an Admin
- *     tags: [Admin Authentication]
+ *     tags: [All Company]
  *     requestBody:
  *       required: true
  *       content:
@@ -92,7 +92,7 @@ router.post('/login', login);
  * /api/organization/verify-otp:
  *   post:
  *     summary: Verify OTP for email verification or password reset
- *     tags: [Admin Authentication]
+ *     tags: [All Company]
  *     requestBody:
  *       required: true
  *       content:
@@ -125,7 +125,7 @@ router.post('/verify-otp', verifyOtp);
  * /api/organization/forgot-password:
  *   post:
  *     summary: Send OTP for password reset
- *     tags: [Admin Authentication]
+ *     tags: [All Company]
  *     requestBody:
  *       required: true
  *       content:
@@ -150,7 +150,7 @@ router.post('/forgot-password', forgotPassword);
  * /api/organization/reset-password:
  *   post:
  *     summary: Reset password with OTP
- *     tags: [Admin Authentication]
+ *     tags: [All Company]
  *     requestBody:
  *       required: true
  *       content:
@@ -185,7 +185,7 @@ router.post('/reset-password', resetPassword);
  * /api/organization/create-organization:
  *   post:
  *     summary: Create a new Organization (Super Admin only)
- *     tags: [Admin Authentication]
+ *     tags: [All Company]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -215,7 +215,7 @@ router.post('/create-organization', authenticateAdmin, createOrganization);
  * /api/organization/create-admin:
  *   post:
  *     summary: Create a dedicated Admin for an Organization (Super Admin only)
- *     tags: [Admin Authentication]
+ *     tags: [All Company]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -248,7 +248,7 @@ router.post('/create-admin', authenticateAdmin, createAdminForOrganization);
  * /api/organization/my-companies:
  *   get:
  *     summary: Get a list of all companies under a Super Admin
- *     tags: [Admin Authentication]
+ *     tags: [All Company]
  *     security:
  *       - bearerAuth: []
  *     responses:

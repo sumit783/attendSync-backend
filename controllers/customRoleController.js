@@ -1,4 +1,4 @@
-const prisma = require('../prisma/client');
+﻿const prisma = require('../prisma/client');
 
 exports.createCustomRole = async (req, res) => {
     try {
@@ -155,6 +155,64 @@ exports.assignRoleToEmployee = async (req, res) => {
         res.status(200).send({ message: 'Custom role assigned successfully.', employee: updatedEmployee });
     } catch (error) {
         console.error('Error assigning custom role:', error);
+        res.status(500).send({ message: 'Internal server error', error: error.message });
+    }
+};
+
+
+exports.getEmployeesByCustomRole = async (req, res) => {
+    try {
+        const organizationId = req.organizationId;
+        const { id } = req.params;
+
+        const role = await prisma.customRole.findFirst({
+            where: { id, organizationId }
+        });
+
+        if (!role) {
+            return res.status(404).send({ message: 'Custom role not found.' });
+        }
+
+        const employees = await prisma.employee.findMany({
+            where: { customRoleId: id, organizationId },
+            select: {
+                id: true,
+                employeeName: true,
+                employeeEmail: true,
+                profilePic: true,
+                department: { select: { name: true } },
+                designations: { select: { name: true } }
+            }
+        });
+
+        res.status(200).send({ role: role.name, employees });
+    } catch (error) {
+        console.error('Error fetching employees by custom role:', error);
+        res.status(500).send({ message: 'Internal server error', error: error.message });
+    }
+};
+
+exports.getAllCustomRolesWithEmployees = async (req, res) => {
+    try {
+        const organizationId = req.organizationId;
+
+        const customRoles = await prisma.customRole.findMany({
+            where: { organizationId },
+            include: {
+                employees: {
+                    select: {
+                        id: true,
+                        employeeName: true,
+                        employeeEmail: true,
+                        profilePic: true
+                    }
+                }
+            }
+        });
+
+        res.status(200).send({ customRoles });
+    } catch (error) {
+        console.error('Error fetching custom roles with employees:', error);
         res.status(500).send({ message: 'Internal server error', error: error.message });
     }
 };

@@ -8,6 +8,8 @@ const router = express.Router();
 
 // ================== Fetch Organization Notifications ==================
 router.get('/organization/notifications', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['All Company']
+
     try {
         const organizationId = req.organizationId;
         
@@ -37,6 +39,8 @@ router.get('/organization/notifications', authenticateAdmin, requireOrganization
 
 // ================== Mark Notification as Read ==================
 router.post('/organization/notifications/read', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['All Company']
+
     const { notificationId, notificationIds } = req.body;
 
     try {

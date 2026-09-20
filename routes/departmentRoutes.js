@@ -20,7 +20,7 @@ router.use(requireOrganizationAccess);
  * /api/departments:
  *   post:
  *     summary: Create a new department
- *     tags: [Departments]
+ *     tags: [All Company]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -45,7 +45,7 @@ router.post('/', departmentController.createDepartment);
  * /api/departments:
  *   get:
  *     summary: Get all departments in the organization
- *     tags: [Departments]
+ *     tags: [All Company]
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -59,7 +59,7 @@ router.get('/', departmentController.getDepartments);
  * /api/departments/{id}:
  *   put:
  *     summary: Update a department
- *     tags: [Departments]
+ *     tags: [All Company]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -90,7 +90,7 @@ router.put('/:id', departmentController.updateDepartment);
  * /api/departments/{id}:
  *   delete:
  *     summary: Delete a department
- *     tags: [Departments]
+ *     tags: [All Company]
  *     security:
  *       - bearerAuth: []
  *     parameters:

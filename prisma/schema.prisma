@@ -25,6 +25,8 @@ model Organization {
   longitude Float    @default(0)
   radius    Float?
   createdAt DateTime @default(now())
+  
+  autoLogout Boolean  @default(false)
 
   // MySQL doesn't support scalar arrays, use Json
   workingDays Json?
@@ -45,6 +47,9 @@ model Organization {
   tasks         Task[]
   customRoles   CustomRole[]
   holidays      Holiday[]
+  announcements Announcement[]
+  supportQueries SupportQuery[]
+  expenses      Expense[]
 }
 
 model Employee {
@@ -62,6 +67,7 @@ model Employee {
   otpExpires       DateTime?
   status           Status       @default(active)
   lastLogin        DateTime?
+  salary           Float?       @default(0)
 
   attendances     Attendance[]
   leaves          Leave[]
@@ -80,6 +86,9 @@ model Employee {
 
   history EmploymentHistory[]
   tasks   Task[]
+  announcements EmployeeAnnouncement[]
+  announcementReplies AnnouncementReply[]
+  expenses      Expense[]
 
   @@index([organizationCode])
 }
@@ -181,6 +190,8 @@ model Notification {
   createdAt      DateTime         @default(now())
   isRead         Boolean          @default(false)
   target         TargetType
+  announcementId String?
+  announcement   Announcement?    @relation(fields: [announcementId], references: [id], onDelete: Cascade)
 }
 
 enum Role {
@@ -215,6 +226,44 @@ enum NotificationType {
   ClockIn
   ClockOut
   Join
+  Announcement
+}
+
+model Announcement {
+  id              String         @id @default(uuid())
+  organizationId  String
+  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  title           String?
+  message         String         @db.LongText
+  canReply        Boolean        @default(false)
+  targetAll       Boolean        @default(true) // If true, target all employees in the organization
+  
+  targetedEmployees EmployeeAnnouncement[]
+  notifications     Notification[]
+  replies           AnnouncementReply[]
+
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+}
+
+model EmployeeAnnouncement {
+  id              String         @id @default(uuid())
+  announcementId  String
+  announcement    Announcement   @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  employeeId      String
+  employee        Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  
+  @@unique([announcementId, employeeId])
+}
+
+model AnnouncementReply {
+  id              String         @id @default(uuid())
+  announcementId  String
+  announcement    Announcement   @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  employeeId      String
+  employee        Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  message         String         @db.LongText
+  createdAt       DateTime       @default(now())
 }
 
 enum TargetType {
@@ -391,3 +440,56 @@ model Holiday {
   @@index([organizationId])
 }
 
+enum QueryStatus {
+  PENDING
+  IN_PROCESS
+  RESOLVED
+  CANCELLED
+}
+
+model SupportQuery {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  
+  message        String       @db.Text
+  attachment     String?      @db.LongText
+  
+  status         QueryStatus  @default(PENDING)
+  
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+}
+
+enum ExpenseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+}
+
+model Expense {
+  id               String        @id @default(uuid())
+  employeeId       String
+  employee         Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organizationCode String
+
+  title            String
+  type             String        // e.g. Travel, Food, Office Supplies
+  amount           Float
+  billUrl          String?       @db.LongText  // base64 or uploaded URL
+  description      String?       @db.Text
+
+  status           ExpenseStatus @default(PENDING)
+  rejectionReason  String?       @db.Text      // Filled when REJECTED
+  reviewedBy       String?       // Admin name/id who reviewed
+  reviewedAt       DateTime?
+
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([employeeId])
+  @@index([organizationId, status])
+}

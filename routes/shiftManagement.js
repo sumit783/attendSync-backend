@@ -7,6 +7,8 @@ const router = express.Router();
 
 // ================== Create a Shift ==================
 router.post('/', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Shifts']
+
   try {
     const organization = await prisma.organization.findUnique({
       where: { id: req.organizationId }
@@ -37,6 +39,8 @@ router.post('/', authenticateAdmin, requireOrganizationAccess, async (req, res) 
 
 // ================== Get all Shifts for Organization ==================
 router.get('/', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Shifts']
+
   try {
     const organization = await prisma.organization.findUnique({
       where: { id: req.organizationId }
@@ -63,6 +67,8 @@ router.get('/', authenticateAdmin, requireOrganizationAccess, async (req, res) =
 
 // ================== Update a Shift ==================
 router.put('/:id', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Shifts']
+
   try {
     const organization = await prisma.organization.findUnique({
       where: { id: req.organizationId }
@@ -99,6 +105,8 @@ router.put('/:id', authenticateAdmin, requireOrganizationAccess, async (req, res
 
 // ================== Delete a Shift ==================
 router.delete('/:id', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Shifts']
+
   try {
     const organization = await prisma.organization.findUnique({
       where: { id: req.organizationId }
@@ -127,6 +135,8 @@ router.delete('/:id', authenticateAdmin, requireOrganizationAccess, async (req, 
 
 // ================== Assign Shift to Employee ==================
 router.post('/assign-to-employee/:employeeId', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Shifts']
+
   try {
     const organization = await prisma.organization.findUnique({
       where: { id: req.organizationId }

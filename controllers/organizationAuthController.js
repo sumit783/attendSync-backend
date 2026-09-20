@@ -198,7 +198,7 @@ exports.resetPassword = async (req, res) => {
 
 // NEW: Endpoint to create a new organization (for SUPER_ADMIN)
 exports.createOrganization = async (req, res) => {
-    const { organizationName, organizationOwnerName, parentId } = req.body;
+    const { organizationName, organizationOwnerName, parentId, autoLogout } = req.body;
     
     const adminId = req.adminId; // Need middleware to set this
 
@@ -242,7 +242,8 @@ exports.createOrganization = async (req, res) => {
             organizationName,
             organizationOwnerName,
             organizationCode,
-            parentId: finalParentId || null
+            parentId: finalParentId || null,
+            autoLogout: autoLogout !== undefined ? autoLogout : true
         }
     });
 

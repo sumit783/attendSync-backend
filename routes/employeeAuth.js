@@ -11,6 +11,8 @@ const generateOTP = () => {
 };
 
 router.post('/signup', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { employeeName, employeeEmail, password, confirmPassword, organizationCode } = req.body;
 
@@ -82,6 +84,8 @@ router.post('/signup', async (req, res) => {
 });
 
 router.post('/login', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { email, password, deviceId, deviceModel, manufacturer, platform, osVersion } = req.body;
 
@@ -183,6 +187,8 @@ router.post('/login', async (req, res) => {
 });
 
 router.post('/verify-otp', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { email, otp, action } = req.body;
 
@@ -231,6 +237,8 @@ router.post('/verify-otp', async (req, res) => {
 
 
 router.post('/forgot-password', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { email } = req.body;
         const user = await prisma.employee.findUnique({ where: { employeeEmail: email } });
@@ -252,6 +260,8 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 router.post('/reset-password', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { email, otp, newPassword } = req.body;
         const user = await prisma.employee.findUnique({ where: { employeeEmail: email } });
@@ -274,6 +284,8 @@ router.post('/reset-password', async (req, res) => {
 });
 
 router.post('/change-organization', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { employeeId, newOrganizationCode } = req.body;
         

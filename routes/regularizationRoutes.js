@@ -8,6 +8,8 @@ const router = express.Router();
 
 // ================== Employee: Submit Regularization Request ==================
 router.post('/employee', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -61,6 +63,8 @@ router.post('/employee', authenticateJWT, async (req, res) => {
 
 // ================== Employee: Get My Regularization Requests ==================
 router.get('/employee', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -79,6 +83,8 @@ router.get('/employee', authenticateJWT, async (req, res) => {
 
 // ================== Admin: Get All Regularization Requests ==================
 router.get('/admin', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const organization = await prisma.organization.findUnique({ where: { id: req.organizationId } });
         if (!organization) return res.status(404).send({ message: 'Organization not found' });
@@ -102,6 +108,8 @@ router.get('/admin', authenticateAdmin, requireOrganizationAccess, async (req, r
 
 // ================== Admin: Approve Regularization Request ==================
 router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const organization = await prisma.organization.findUnique({ where: { id: req.organizationId } });
         if (!organization) return res.status(404).send({ message: 'Organization not found' });
@@ -210,6 +218,8 @@ router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, a
 
 // ================== Admin: Reject Regularization Request ==================
 router.put('/admin/:id/reject', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const organization = await prisma.organization.findUnique({ where: { id: req.organizationId } });
         if (!organization) return res.status(404).send({ message: 'Organization not found' });

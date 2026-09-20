@@ -19,7 +19,7 @@ router.use(requireOrganizationAccess);
  * /api/organization/holidays:
  *   post:
  *     summary: Create a new holiday
- *     tags: [Holidays]
+ *     tags: [Holiday]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -54,7 +54,7 @@ router.post('/', holidayController.createHoliday);
  * /api/organization/holidays:
  *   get:
  *     summary: Get all holidays
- *     tags: [Holidays]
+ *     tags: [Holiday]
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -68,7 +68,7 @@ router.get('/', holidayController.getHolidays);
  * /api/organization/holidays/{id}:
  *   put:
  *     summary: Update a holiday
- *     tags: [Holidays]
+ *     tags: [Holiday]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -105,7 +105,7 @@ router.put('/:id', holidayController.updateHoliday);
  * /api/organization/holidays/{id}:
  *   delete:
  *     summary: Delete a holiday
- *     tags: [Holidays]
+ *     tags: [Holiday]
  *     security:
  *       - bearerAuth: []
  *     parameters:

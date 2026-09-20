@@ -6,6 +6,8 @@ const router = express.Router();
 
 // ================== Fetch Employee Notifications ==================
 router.get('/employee/notifications', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['All Company']
+
     try {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -29,6 +31,8 @@ router.get('/employee/notifications', authenticateJWT, async (req, res) => {
 
 // ================== Mark Notification as Read ==================
 router.post('/employee/notifications/read', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['All Company']
+
     const { notificationId, notificationIds } = req.body;
 
     try {

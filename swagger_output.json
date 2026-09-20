@@ -223,6 +223,9 @@
                 },
                 "parentId": {
                   "example": "any"
+                },
+                "autoLogout": {
+                  "example": "any"
                 }
               }
             }
@@ -718,6 +721,9 @@
     },
     "/api/organization/office-wifi": {
       "post": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -777,10 +783,91 @@
         }
       }
     },
-    "/api/organization/employees": {
-      "get": {
+    "/api/organization/update/{id}": {
+      "put": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "autoLogout": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/organization/employees": {
+      "get": {
+        "tags": [
+          "All Company"
+        ],
+        "description": "",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "type": "string"
+          },
           {
             "name": "authorization",
             "in": "header",
@@ -814,6 +901,9 @@
         }
       },
       "post": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -855,6 +945,9 @@
                 },
                 "customRoleId": {
                   "example": "any"
+                },
+                "salary": {
+                  "example": "any"
                 }
               }
             }
@@ -884,6 +977,9 @@
     },
     "/api/organization/present-employees": {
       "get": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -931,6 +1027,9 @@
     },
     "/api/organization/employees/{employeeId}/reset-device": {
       "post": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -974,6 +1073,9 @@
     },
     "/api/organization/employee/{employeeId}": {
       "delete": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1017,6 +1119,9 @@
     },
     "/api/organization/employees-status": {
       "get": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1057,8 +1162,67 @@
         }
       }
     },
+    "/api/organization/employees/{employeeId}/performance-report": {
+      "get": {
+        "tags": [
+          "All Company"
+        ],
+        "description": "",
+        "parameters": [
+          {
+            "name": "employeeId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "where",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "select",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
     "/api/organization/employee-details/{employeeId}": {
       "get": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1102,6 +1266,9 @@
     },
     "/api/organization/export-attendance": {
       "get": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1142,8 +1309,311 @@
         }
       }
     },
+    "/api/organization/employees/{employeeId}/manual-attendance": {
+      "post": {
+        "tags": [
+          "All Company"
+        ],
+        "description": "",
+        "parameters": [
+          {
+            "name": "employeeId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "inDate": {
+                  "example": "any"
+                },
+                "inTime": {
+                  "example": "any"
+                },
+                "outDate": {
+                  "example": "any"
+                },
+                "outTime": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/organization/employees/{employeeId}/finance-summary": {
+      "get": {
+        "tags": [
+          "All Company"
+        ],
+        "description": "",
+        "parameters": [
+          {
+            "name": "employeeId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "month",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/organization/employees/{employeeId}/expenses": {
+      "get": {
+        "tags": [
+          "All Company"
+        ],
+        "description": "",
+        "parameters": [
+          {
+            "name": "employeeId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/organization/expenses": {
+      "get": {
+        "tags": [
+          "All Company"
+        ],
+        "description": "",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/organization/expenses/{id}/status": {
+      "patch": {
+        "tags": [
+          "All Company"
+        ],
+        "description": "",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "example": "any"
+                },
+                "rejectionReason": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
     "/api/organization/shifts/": {
       "post": {
+        "tags": [
+          "Shifts"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1191,6 +1661,9 @@
         }
       },
       "get": {
+        "tags": [
+          "Shifts"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1228,6 +1701,9 @@
     },
     "/api/organization/shifts/{id}": {
       "put": {
+        "tags": [
+          "Shifts"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1281,6 +1757,9 @@
         }
       },
       "delete": {
+        "tags": [
+          "Shifts"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1324,6 +1803,9 @@
     },
     "/api/organization/shifts/assign-to-employee/{employeeId}": {
       "post": {
+        "tags": [
+          "Shifts"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1379,6 +1861,9 @@
     },
     "/api/employee/clock-in-out": {
       "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1441,6 +1926,9 @@
     },
     "/api/employee/employee-calendar": {
       "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1470,6 +1958,9 @@
     },
     "/api/employee/all-present-days": {
       "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1499,6 +1990,9 @@
     },
     "/api/employee/profile": {
       "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1528,6 +2022,9 @@
     },
     "/api/employee/upload-profile-pic": {
       "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1560,6 +2057,9 @@
     },
     "/api/employee/attendance/today": {
       "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1589,6 +2089,9 @@
     },
     "/api/employee/attendance/present-nearby": {
       "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1623,6 +2126,9 @@
     },
     "/api/employee/attendance/{date}": {
       "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1658,6 +2164,9 @@
     },
     "/api/employee/attendance/weekly": {
       "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1695,8 +2204,115 @@
         }
       }
     },
+    "/api/employee/expenses": {
+      "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "example": "any"
+                },
+                "type": {
+                  "example": "any"
+                },
+                "amount": {
+                  "example": "any"
+                },
+                "billUrl": {
+                  "example": "any"
+                },
+                "description": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
+        "description": "",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
     "/api/employee/signup": {
       "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1742,6 +2358,9 @@
     },
     "/api/employee/login": {
       "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1793,6 +2412,9 @@
     },
     "/api/employee/verify-otp": {
       "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1829,6 +2451,9 @@
     },
     "/api/employee/forgot-password": {
       "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1859,6 +2484,9 @@
     },
     "/api/employee/reset-password": {
       "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1895,6 +2523,9 @@
     },
     "/api/employee/change-organization": {
       "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1928,6 +2559,9 @@
     },
     "/api/leave/organization/leave-requests": {
       "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -1990,6 +2624,9 @@
     },
     "/api/leave/employee/leave-request": {
       "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -2046,6 +2683,9 @@
     },
     "/api/leave/organization/leave-approval": {
       "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -2101,6 +2741,9 @@
     },
     "/api/leave/employee/leave-requests": {
       "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -2130,6 +2773,9 @@
     },
     "/api/notification/employee/notifications": {
       "get": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -2156,6 +2802,9 @@
     },
     "/api/notification/employee/notifications/read": {
       "post": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -2206,6 +2855,9 @@
     },
     "/api/notification/organization/notifications": {
       "get": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -2243,6 +2895,9 @@
     },
     "/api/notification/organization/notifications/read": {
       "post": {
+        "tags": [
+          "All Company"
+        ],
         "description": "",
         "parameters": [
           {
@@ -2298,6 +2953,9 @@
     },
     "/api/regularization/employee": {
       "post": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -2355,6 +3013,9 @@
         }
       },
       "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -2381,6 +3042,9 @@
     },
     "/api/regularization/admin": {
       "get": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -2418,6 +3082,9 @@
     },
     "/api/regularization/admin/{id}/approve": {
       "put": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -2473,6 +3140,9 @@
     },
     "/api/regularization/admin/{id}/reject": {
       "put": {
+        "tags": [
+          "Attendance and Employee Management"
+        ],
         "description": "",
         "parameters": [
           {
@@ -3132,6 +3802,38 @@
         }
       }
     },
+    "/api/organization/custom-roles/assigned-employees": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
     "/api/organization/tasks/": {
       "post": {
         "description": "",
@@ -3572,6 +4274,1003 @@
           },
           "404": {
             "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/announcements/": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "example": "any"
+                },
+                "message": {
+                  "example": "any"
+                },
+                "canReply": {
+                  "example": "any"
+                },
+                "targetAll": {
+                  "example": "any"
+                },
+                "employeeIds": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/announcements/{id}": {
+      "put": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "example": "any"
+                },
+                "message": {
+                  "example": "any"
+                },
+                "canReply": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "delete": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/announcements/{id}/replies": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/announcements/{id}/reply": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/organization/support": {
+      "post": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "example": "any"
+                },
+                "attachment": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      },
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/organization/support/{queryId}": {
+      "put": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "queryId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "message": {
+                  "example": "any"
+                },
+                "attachment": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/organization/support/{queryId}/cancel": {
+      "patch": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "queryId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "x-organization-id",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/superadmin/queries": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "x-superadmin-key",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/superadmin/queries/{queryId}/status": {
+      "patch": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "queryId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "x-superadmin-key",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "key",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "example": "any"
+                }
+              }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "description": "Not Found"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/group/stats": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/group/attendance-by-company": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/group/department-distribution": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/group/expense-trends": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/group/leave-trends": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/group/approvals": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/group/alerts": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/reports/companies": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/reports/kpis": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "companyId",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/reports/attendance-trend": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "companyId",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/reports/company-rates": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/reports/late-early": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "companyId",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "500": {
+            "description": "Internal Server Error"
+          }
+        }
+      }
+    },
+    "/api/reports/leave-summary": {
+      "get": {
+        "description": "",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "type": "string"
+          },
+          {
+            "name": "startDate",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "endDate",
+            "in": "query",
+            "type": "string"
+          },
+          {
+            "name": "companyId",
+            "in": "query",
+            "type": "string"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
           },
           "500": {
             "description": "Internal Server Error"

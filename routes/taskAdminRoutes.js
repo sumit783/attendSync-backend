@@ -20,7 +20,7 @@ router.use(requireOrganizationAccess);
  * /api/organization/tasks:
  *   post:
  *     summary: Create a new task and assign to employee
- *     tags: [Admin Tasks]
+ *     tags: [Work Assigning]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -50,7 +50,7 @@ router.post('/', taskAdminController.createTask);
  * /api/organization/tasks:
  *   get:
  *     summary: Get all tasks in the organization
- *     tags: [Admin Tasks]
+ *     tags: [Work Assigning]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -76,7 +76,7 @@ router.get('/', taskAdminController.getTasks);
  * /api/organization/tasks/{id}:
  *   put:
  *     summary: Update a task
- *     tags: [Admin Tasks]
+ *     tags: [Work Assigning]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -112,7 +112,7 @@ router.put('/:id', taskAdminController.updateTask);
  * /api/organization/tasks/{id}:
  *   delete:
  *     summary: Delete a task
- *     tags: [Admin Tasks]
+ *     tags: [Work Assigning]
  *     security:
  *       - bearerAuth: []
  *     parameters:

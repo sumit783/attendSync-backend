@@ -18,7 +18,7 @@ router.use(authenticateJWT);
  * /api/employee/tasks:
  *   get:
  *     summary: Get all tasks assigned to the employee
- *     tags: [Employee Tasks]
+ *     tags: [Work Assigning]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -39,7 +39,7 @@ router.get('/', taskEmployeeController.getMyTasks);
  * /api/employee/tasks/{id}/status:
  *   patch:
  *     summary: Update the status of a task
- *     tags: [Employee Tasks]
+ *     tags: [Work Assigning]
  *     security:
  *       - bearerAuth: []
  *     parameters:

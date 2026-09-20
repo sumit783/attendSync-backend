@@ -26,6 +26,11 @@ const customRoleRoutes = require('./routes/customRoleRoutes');
 const taskAdminRoutes = require('./routes/taskAdminRoutes');
 const taskEmployeeRoutes = require('./routes/taskEmployeeRoutes');
 const holidayRoutes = require('./routes/holidayRoutes');
+const announcementRoutes = require('./routes/announcementRoutes');
+const supportRoutes = require('./routes/supportRoutes');
+const superAdminRoutes = require('./routes/superAdminRoutes');
+const groupDashboardRoutes = require('./routes/groupDashboardRoutes');
+const reportRoutes = require('./routes/reportRoutes');
 // const AbsenceMarker = require('./Handlers/AbsenceHandlers');
 // Import the cron jobs so they start running
 require('./Handlers/cronJobs'); // This will execute and schedule your cron jobs
@@ -85,7 +90,7 @@ app.use('/api/', limiter);
 
 // Middleware for parsing JSON requests
 app.use(express.json({
-  limit: '10kb',
+  limit: '50mb',
   verify: (req, res, buf) => {
     try {
       JSON.parse(buf);
@@ -123,7 +128,11 @@ app.use('/api/organization/custom-roles', customRoleRoutes);
 app.use('/api/organization/tasks', taskAdminRoutes);
 app.use('/api/organization/holidays', holidayRoutes);
 app.use('/api/employee/tasks', taskEmployeeRoutes);
-
+app.use('/api/announcements', announcementRoutes);
+app.use('/api/organization', supportRoutes);
+app.use('/api/superadmin', superAdminRoutes);
+app.use('/api/group', groupDashboardRoutes);
+app.use('/api/reports', reportRoutes);
 app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Setup Swagger UI

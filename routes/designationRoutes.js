@@ -20,7 +20,7 @@ router.use(requireOrganizationAccess);
  * /api/designations:
  *   post:
  *     summary: Create a new designation
- *     tags: [Designations]
+ *     tags: [Designation]
  *     security:
  *       - bearerAuth: []
  *     requestBody:
@@ -48,7 +48,7 @@ router.post('/', designationController.createDesignation);
  * /api/designations:
  *   get:
  *     summary: Get all designations in the organization
- *     tags: [Designations]
+ *     tags: [Designation]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -68,7 +68,7 @@ router.get('/', designationController.getDesignations);
  * /api/designations/{id}:
  *   put:
  *     summary: Update a designation
- *     tags: [Designations]
+ *     tags: [Designation]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -101,7 +101,7 @@ router.put('/:id', designationController.updateDesignation);
  * /api/designations/{id}:
  *   delete:
  *     summary: Delete a designation
- *     tags: [Designations]
+ *     tags: [Designation]
  *     security:
  *       - bearerAuth: []
  *     parameters:
@@ -123,7 +123,7 @@ router.delete('/:id', designationController.deleteDesignation);
  * /api/designations/assign-to-employee/{employeeId}:
  *   post:
  *     summary: Assign designations to an employee
- *     tags: [Designations]
+ *     tags: [Designation]
  *     security:
  *       - bearerAuth: []
  *     parameters:

@@ -44,22 +44,26 @@ const requireOrganizationAccess = async (req, res, next) => {
              });
 
              if (!role) {
-                 // Fallback check for parentId
+                 // Fallback check for global super admin or parentId
                  const targetOrg = await prisma.organization.findUnique({ where: { id: targetOrganizationId } });
-                 if (targetOrg && targetOrg.parentId) {
-                     const superRole = await prisma.adminRole.findFirst({
-                         where: {
-                             adminId: req.adminId,
-                             organizationId: targetOrg.parentId,
-                             role: 'SUPER_ADMIN'
-                         }
-                     });
-                     if (superRole) {
-                         req.organizationId = targetOrganizationId;
-                         req.organizationCode = targetOrg.organizationCode;
-                         return next();
+                 
+                 const superRole = await prisma.adminRole.findFirst({
+                     where: {
+                         adminId: req.adminId,
+                         role: 'SUPER_ADMIN',
+                         OR: [
+                             { organizationId: null },
+                             ...(targetOrg && targetOrg.parentId ? [{ organizationId: targetOrg.parentId }] : [])
+                         ]
                      }
+                 });
+
+                 if (superRole) {
+                     req.organizationId = targetOrganizationId;
+                     req.organizationCode = targetOrg ? targetOrg.organizationCode : null;
+                     return next();
                  }
+                 
                  return res.status(403).send({ message: 'Forbidden. You do not have access to this organization.' });
              }
              

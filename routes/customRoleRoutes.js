@@ -164,4 +164,18 @@ router.delete('/:id', customRoleController.deleteCustomRole);
  */
 router.post('/assign-to-employee/:employeeId', customRoleController.assignRoleToEmployee);
 
+/**
+ * @swagger
+ * /api/organization/custom-roles/assigned-employees:
+ *   get:
+ *     summary: Get all custom roles with their assigned employees
+ *     tags: [Custom Roles]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Roles and assigned employees fetched successfully
+ */
+router.get('/assigned-employees', customRoleController.getAllCustomRolesWithEmployees);
+
 module.exports = router;
