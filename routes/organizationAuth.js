@@ -259,4 +259,37 @@ router.post('/create-admin', authenticateAdmin, createAdminForOrganization);
  */
 router.get('/my-companies', authenticateAdmin, getSuperAdminOrganizations);
 
+/**
+ * @swagger
+ * /api/organization/company-comparison:
+ *   get:
+ *     summary: Get company comparison metrics across managed organizations
+ *     tags: [All Company]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: period
+ *         schema:
+ *           type: string
+ *         description: Period (e.g. Sep 2025, Q1 2025)
+ *       - in: query
+ *         name: startDate
+ *         schema:
+ *           type: string
+ *         description: Custom start date (YYYY-MM-DD)
+ *       - in: query
+ *         name: endDate
+ *         schema:
+ *           type: string
+ *         description: Custom end date (YYYY-MM-DD)
+ *     responses:
+ *       200:
+ *         description: Company comparison data.
+ *       401:
+ *         description: Unauthorized.
+ */
+const { getCompanyComparison } = require('../controllers/companyComparisonController');
+router.get('/company-comparison', authenticateAdmin, getCompanyComparison);
+
 module.exports = router;

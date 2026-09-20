@@ -449,4 +449,10 @@ router.get('/alerts', async (req, res) => {
     }
 });
 
+// ==========================================
+// 8. COMPANY COMPARISON
+// ==========================================
+const { getCompanyComparison } = require('../controllers/companyComparisonController');
+router.get('/company-comparison', getCompanyComparison);
+
 module.exports = router;
