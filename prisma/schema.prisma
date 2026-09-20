@@ -241,9 +241,9 @@ model Announcement {
   targetedEmployees EmployeeAnnouncement[]
   notifications     Notification[]
   replies           AnnouncementReply[]
-
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  isReadBy          Json           @default("[]") // Array of employee IDs who have read this announcement
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
 }
 
 model EmployeeAnnouncement {
@@ -286,6 +286,8 @@ model AttendanceRegularization {
   requestType       String // e.g. "Missing Check-In", "Missing Check-Out", "System Error"
   requestedCheckIn  String? // e.g. "09:00"
   requestedCheckOut String? // e.g. "18:00"
+  requestedCheckInDate  DateTime?
+  requestedCheckOutDate DateTime?
   reason            String
   attachment        String? @db.LongText // Base64 data
   status            RegularizationStatus @default(Pending)

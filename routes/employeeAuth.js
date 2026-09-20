@@ -95,10 +95,22 @@ router.post('/login', async (req, res) => {
         let user = employee;
 
         if (!user) {
-            const org = await prisma.organization.findUnique({ where: { organizationEmail: email } });
-            if (org) {
-                user = org;
-                userType = 'Organization';
+            const admin = await prisma.admin.findUnique({ 
+                where: { email },
+                include: { roles: { include: { organization: true } } }
+            });
+            if (admin && admin.roles && admin.roles.length > 0) {
+                const org = admin.roles[0].organization;
+                if (org) {
+                    user = {
+                        ...org,
+                        id: admin.id,
+                        password: admin.password,
+                        isVerified: admin.isVerified,
+                        organizationEmail: admin.email,
+                    };
+                    userType = 'Organization';
+                }
             }
         }
 

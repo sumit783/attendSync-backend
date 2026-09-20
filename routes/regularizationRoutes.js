@@ -14,7 +14,7 @@ router.post('/employee', authenticateJWT, async (req, res) => {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        const { attendanceDate, requestType, requestedCheckIn, requestedCheckOut, reason, attachment } = req.body;
+        const { attendanceDate, requestType, requestedCheckIn, requestedCheckOut, requestedCheckInDate, requestedCheckOutDate, reason, attachment } = req.body;
 
         if (!attendanceDate || !requestType || !reason) {
             return res.status(400).send({ message: 'Attendance date, request type, and reason are required.' });
@@ -49,6 +49,8 @@ router.post('/employee', authenticateJWT, async (req, res) => {
                 requestType,
                 requestedCheckIn,
                 requestedCheckOut,
+                requestedCheckInDate: requestedCheckInDate ? new Date(requestedCheckInDate) : null,
+                requestedCheckOutDate: requestedCheckOutDate ? new Date(requestedCheckOutDate) : null,
                 reason,
                 attachment
             }
@@ -145,11 +147,23 @@ router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, a
             }
         });
 
-        // Parse requested check in/out using IST (+05:30) offset
-        const clockInDate = request.requestedCheckIn ? new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckIn}:00+05:30`) : startOfDay;
-        const clockOutDate = request.requestedCheckOut ? new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckOut}:00+05:30`) : startOfDay;
+        // Parse requested check in/out. Use precise dates if provided, else fall back to IST time strings on the attendanceDate
+        let clockInDate = startOfDay;
+        if (request.requestedCheckInDate) {
+            clockInDate = new Date(request.requestedCheckInDate);
+        } else if (request.requestedCheckIn) {
+            clockInDate = new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckIn}:00+05:30`);
+        }
+
+        let clockOutDate = startOfDay;
+        if (request.requestedCheckOutDate) {
+            clockOutDate = new Date(request.requestedCheckOutDate);
+        } else if (request.requestedCheckOut) {
+            clockOutDate = new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckOut}:00+05:30`);
+        }
+        
         let duration = 0;
-        if (request.requestedCheckIn && request.requestedCheckOut) {
+        if ((request.requestedCheckInDate || request.requestedCheckIn) && (request.requestedCheckOutDate || request.requestedCheckOut)) {
              duration = (clockOutDate.getTime() - clockInDate.getTime()) / (1000 * 60 * 60); // hours
         }
 

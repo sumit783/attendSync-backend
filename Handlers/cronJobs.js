@@ -66,12 +66,12 @@ cron.schedule('*/15 * * * *', async () => {
       const organization = employee.organization;
       if (!organization.autoLogout) continue;
 
-      const inTimeStr = employee.shift ? employee.shift.startTime : organization.inTime;
-      const outTimeStr = employee.shift ? employee.shift.endTime : organization.outTime;
+      const inTimeStr = (employee.shift && employee.shift.startTime) ? employee.shift.startTime : organization.inTime;
+      const outTimeStr = (employee.shift && employee.shift.endTime) ? employee.shift.endTime : organization.outTime;
       if (!outTimeStr || !inTimeStr) continue;
 
-      const orgInFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
-      const orgOutFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
+      const orgInFormat = inTimeStr.includes('AM') || inTimeStr.includes('PM') ? 'hh:mm A' : 'HH:mm';
+      const orgOutFormat = outTimeStr.includes('AM') || outTimeStr.includes('PM') ? 'hh:mm A' : 'HH:mm';
 
       let shiftStart = moment.tz(`${currentDate} ${inTimeStr}`, `YYYY-MM-DD ${orgInFormat}`, 'Asia/Kolkata');
       let shiftEnd = moment.tz(`${currentDate} ${outTimeStr}`, `YYYY-MM-DD ${orgOutFormat}`, 'Asia/Kolkata');

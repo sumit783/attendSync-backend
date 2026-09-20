@@ -235,6 +235,108 @@ exports.getAnnouncementReplies = async (req, res) => {
 };
 
 // Employee routes below
+
+// Mark the notification linked to an announcement as read (for the logged-in employee)
+exports.markAnnouncementAsRead = async (req, res) => {
+    try {
+        const employeeId = req.user.id;
+        const { id } = req.params; // announcement id
+
+        // Check the announcement exists
+        const announcement = await prisma.announcement.findUnique({
+            where: { id }
+        });
+
+        if (!announcement) {
+            return res.status(404).send({ message: 'Announcement not found.' });
+        }
+
+        // Find the notification for this employee + announcement
+        const notification = await prisma.notification.findFirst({
+            where: {
+                userId: employeeId,
+                announcementId: id,
+                target: 'Employee'
+            }
+        });
+
+        // Build updated isReadBy list (deduplicated)
+        const currentReadBy = Array.isArray(announcement.isReadBy) ? announcement.isReadBy : [];
+        const alreadyRead = currentReadBy.includes(employeeId);
+
+        if (!alreadyRead) {
+            await prisma.announcement.update({
+                where: { id },
+                data: { isReadBy: [...currentReadBy, employeeId] }
+            });
+        }
+
+        if (notification && !notification.isRead) {
+            await prisma.notification.update({
+                where: { id: notification.id },
+                data: { isRead: true }
+            });
+        }
+
+        res.status(200).send({ message: alreadyRead ? 'Announcement already marked as read.' : 'Announcement marked as read.' });
+    } catch (error) {
+        console.error('Error marking announcement as read:', error);
+        res.status(500).send({ message: 'Internal server error', error: error.message });
+    }
+};
+
+// Get list of employees who have read / not yet read an announcement (Admin)
+exports.getAnnouncementReadBy = async (req, res) => {
+    try {
+        const organizationId = req.organizationId;
+        const { id } = req.params;
+
+        const announcement = await prisma.announcement.findFirst({
+            where: { id, organizationId },
+            include: {
+                targetedEmployees: {
+                    include: {
+                        employee: {
+                            select: { id: true, employeeName: true, profilePic: true }
+                        }
+                    }
+                }
+            }
+        });
+
+        if (!announcement) {
+            return res.status(404).send({ message: 'Announcement not found.' });
+        }
+
+        const readByIds = Array.isArray(announcement.isReadBy) ? announcement.isReadBy : [];
+
+        // Determine the target audience
+        let targetedEmployees = [];
+        if (announcement.targetAll) {
+            targetedEmployees = await prisma.employee.findMany({
+                where: { organizationId, status: 'active' },
+                select: { id: true, employeeName: true, profilePic: true }
+            });
+        } else {
+            targetedEmployees = announcement.targetedEmployees.map(te => te.employee).filter(Boolean);
+        }
+
+        const readBy = targetedEmployees.filter(emp => readByIds.includes(emp.id));
+        const notReadBy = targetedEmployees.filter(emp => !readByIds.includes(emp.id));
+
+        res.status(200).send({
+            readBy,
+            notReadBy,
+            totalRead: readBy.length,
+            totalNotRead: notReadBy.length,
+            totalTargeted: targetedEmployees.length
+        });
+    } catch (error) {
+        console.error('Error fetching readBy list:', error);
+        res.status(500).send({ message: 'Internal server error', error: error.message });
+    }
+};
+
 exports.replyToAnnouncement = async (req, res) => {
     try {
         const employeeId = req.user.id;
@@ -352,4 +454,3 @@ exports.markAllRepliesAsRead = async (req, res) => {
         res.status(500).send({ message: 'Internal server error', error: error.message });
     }
 };
-

@@ -170,6 +170,70 @@ router.get('/:id/replies', authenticateAdmin, requireOrganizationAccess, announc
 
 /**
  * @swagger
+ * /api/announcements/{id}/read-by:
+ *   get:
+ *     summary: Get list of employees who have read an announcement (Admin)
+ *     tags: [Announcement]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Announcement ID
+ *     responses:
+ *       200:
+ *         description: List of employees who read the announcement
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 readBy:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       id:
+ *                         type: string
+ *                       employeeName:
+ *                         type: string
+ *                       profilePic:
+ *                         type: string
+ *                 totalRead:
+ *                   type: integer
+ *       404:
+ *         description: Announcement not found
+ */
+router.get('/:id/read-by', authenticateAdmin, requireOrganizationAccess, announcementController.getAnnouncementReadBy);
+
+/**
+ * @swagger
+ * /api/announcements/{id}/read:
+ *   patch:
+ *     summary: Mark an announcement as read (Employee)
+ *     tags: [Announcement]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Announcement ID
+ *     responses:
+ *       200:
+ *         description: Announcement marked as read
+ *       404:
+ *         description: Announcement or notification not found
+ */
+router.patch('/:id/read', authenticateJWT, announcementController.markAnnouncementAsRead);
+
+/**
+ * @swagger
  * /api/announcements/{id}/reply:
  *   post:
  *     summary: Reply to an announcement (Employee)
