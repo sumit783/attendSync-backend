@@ -163,12 +163,13 @@ router.get('/employees', authenticateAdmin, requireOrganizationAccess, async (re
         employeeName: true,
         employeeEmail: true,
         profilePic: true,
+        salary: true,
         // organizationCode: true,
         // role: true,
         status: true,
         // shift: { select: { name: true, weekOffs: true } },
-        department: { select: { name: true } },
-        customRole: { select: { name: true } },
+        department: { select: { id: true, name: true } },
+        customRole: { select: { id: true, name: true } },
         designations: { select: { id: true, name: true } },
       }
     });

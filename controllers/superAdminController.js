@@ -6,9 +6,11 @@ exports.getAllQueries = async (req, res) => {
             include: {
                 organization: {
                     select: {
+                        id: true,
                         organizationName: true,
                         organizationCode: true,
-                        organizationEmail: true
+                        organizationOwnerName: true,
+                        organizationProfilePic: true
                     }
                 }
             },
