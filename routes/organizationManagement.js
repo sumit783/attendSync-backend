@@ -1373,6 +1373,8 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
             AbsentDays: 0,
             LeaveDays: 0,
             WeekoffTaken: 0,
+            LateLogins: 0,
+            EarlyLogouts: 0,
             TotalDecimalHours: 0,
             TotalExtraDecimalHours: 0
           };
@@ -1385,6 +1387,8 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
         let status = '';
         let loginTime = 'N/A';
         let logoutTime = 'N/A';
+        let isLateLogin = 'No';
+        let isEarlyLogout = 'No';
         let totalHours = 0;
         let extraHours = 0;
 
@@ -1409,6 +1413,15 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
 
           const isLate = firstSession.clockInTime && moment(firstSession.clockInTime).tz('Asia/Kolkata').isAfter(expectedInTime);
           const isEarlyLeave = lastSession.clockOutTime && moment(lastSession.clockOutTime).tz('Asia/Kolkata').isBefore(expectedOutTime);
+
+          if (isLate) {
+            isLateLogin = 'Yes';
+            employeeSummary[email].LateLogins += 1;
+          }
+          if (isEarlyLeave) {
+            isEarlyLogout = 'Yes';
+            employeeSummary[email].EarlyLogouts += 1;
+          }
 
           if (attendance.finalRemark && ['Half Day', 'Regularized'].includes(attendance.finalRemark)) {
             status = attendance.finalRemark;
@@ -1442,16 +1455,18 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
         }
 
         exportData.push({
-          EmployeeName: emp.employeeName,
-          Email: email,
-          Organization: organization.organizationName,
-          Department: emp.department?.name || 'Unassigned',
-          Date: currentDateStr,
-          LoginTime: loginTime,
-          LogoutTime: logoutTime,
-          TotalHours: formatHoursToHHMM(totalHours),
-          ExtraHours: formatHoursToHHMM(extraHours),
-          Status: status
+          'Employee Name': emp.employeeName,
+          'Email': email,
+          'Organization': organization.organizationName,
+          'Department': emp.department?.name || 'Unassigned',
+          'Date': currentDateStr,
+          'Login Time': loginTime,
+          'Logout Time': logoutTime,
+          'Late Login': isLateLogin,
+          'Early Logout': isEarlyLogout,
+          'Total Hours (HH:MM)': formatHoursToHHMM(totalHours),
+          'Extra Hours (HH:MM)': formatHoursToHHMM(extraHours),
+          'Status': status
         });
       });
     }
@@ -1464,12 +1479,14 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
       'Organization': emp.Organization,
       'Department': emp.Department,
       'Expected Working Days': emp.ExpectedWorkingDays,
-      'Present Days': emp.PresentDays,
+      'Actual Working Days (Present)': emp.PresentDays,
       'Absent Days': emp.AbsentDays,
       'Leave Days': emp.LeaveDays,
-      'Weekoff Taken': emp.WeekoffTaken,
-      'Total Working Hours': formatHoursToHHMM(emp.TotalDecimalHours),
-      'Extra Working Hours': formatHoursToHHMM(emp.TotalExtraDecimalHours)
+      'Week Offs': emp.WeekoffTaken,
+      'Late Logins (Count)': emp.LateLogins,
+      'Early Logouts (Count)': emp.EarlyLogouts,
+      'Total Working Hours (HH:MM)': formatHoursToHHMM(emp.TotalDecimalHours),
+      'Extra Working Hours (HH:MM)': formatHoursToHHMM(emp.TotalExtraDecimalHours)
     }));
 
     res.status(200).send({ exportData, summaryData });

@@ -438,6 +438,8 @@ router.get("/export-attendance", async (req, res) => {
                         AbsentDays: 0,
                         LeaveDays: 0,
                         WeekoffTaken: 0,
+                        LateLogins: 0,
+                        EarlyLogouts: 0,
                         TotalDecimalHours: 0,
                         TotalExtraDecimalHours: 0
                     };
@@ -457,6 +459,8 @@ router.get("/export-attendance", async (req, res) => {
                 let status = '';
                 let loginTime = 'N/A';
                 let logoutTime = 'N/A';
+                let isLateLogin = 'No';
+                let isEarlyLogout = 'No';
                 let totalHours = 0;
                 let extraHours = 0;
 
@@ -486,6 +490,15 @@ router.get("/export-attendance", async (req, res) => {
 
                     const isLate = firstSession.clockInTime && moment(firstSession.clockInTime).tz('Asia/Kolkata').isAfter(expectedInTime);
                     const isEarlyLeave = lastSession.clockOutTime && moment(lastSession.clockOutTime).tz('Asia/Kolkata').isBefore(expectedOutTime);
+
+                    if (isLate) {
+                        isLateLogin = 'Yes';
+                        employeeSummary[email].LateLogins += 1;
+                    }
+                    if (isEarlyLeave) {
+                        isEarlyLogout = 'Yes';
+                        employeeSummary[email].EarlyLogouts += 1;
+                    }
 
                     if (attendance.finalRemark && ['Half Day', 'Regularized'].includes(attendance.finalRemark)) {
                         status = attendance.finalRemark;
@@ -530,6 +543,8 @@ router.get("/export-attendance", async (req, res) => {
                     Date: currentDateStr,
                     LoginTime: loginTime,
                     LogoutTime: logoutTime,
+                    LateLogin: isLateLogin,
+                    EarlyLogout: isEarlyLogout,
                     TotalHours: formatHoursToHHMM(totalHours),
                     ExtraHours: formatHoursToHHMM(extraHours),
                     Status: status
@@ -545,16 +560,18 @@ router.get("/export-attendance", async (req, res) => {
             'Organization': emp.Organization,
             'Department': emp.Department,
             'Expected Working Days': emp.ExpectedWorkingDays,
-            'Present Days': emp.PresentDays,
+            'Actual Working Days (Present)': emp.PresentDays,
             'Absent Days': emp.AbsentDays,
             'Leave Days': emp.LeaveDays,
             'Weekoff Taken': emp.WeekoffTaken,
+            'Late Logins (Count)': emp.LateLogins,
+            'Early Logouts (Count)': emp.EarlyLogouts,
             'Total Working Hours': formatHoursToHHMM(emp.TotalDecimalHours),
             'Extra Working Hours': formatHoursToHHMM(emp.TotalExtraDecimalHours)
         }));
 
         if (format === 'csv') {
-            const headers = ['Employee Name', 'Email', 'Organization', 'Department', 'Date', 'Clock In', 'Clock Out', 'Total Hours', 'Extra Hours', 'Status'];
+            const headers = ['Employee Name', 'Email', 'Organization', 'Department', 'Date', 'Clock In', 'Clock Out', 'Late Login', 'Early Logout', 'Total Hours', 'Extra Hours', 'Status'];
             const rows = exportData.map(d => [
                 `"${d.EmployeeName}"`,
                 `"${d.Email}"`,
@@ -563,6 +580,8 @@ router.get("/export-attendance", async (req, res) => {
                 `"${d.Date}"`,
                 `"${d.LoginTime}"`,
                 `"${d.LogoutTime}"`,
+                `"${d.LateLogin}"`,
+                `"${d.EarlyLogout}"`,
                 `"${d.TotalHours}"`,
                 `"${d.ExtraHours}"`,
                 `"${d.Status}"`
