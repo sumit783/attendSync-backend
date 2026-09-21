@@ -414,29 +414,38 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
         const employeeId = req.user.id;
         const employee = await prisma.employee.findUnique({
             where: { id: employeeId },
-            include: { shift: true }
+            select: { organizationId: true, organizationCode: true, salary: true, shift: true }
         });
         if (!employee) return res.status(404).json({ message: 'Employee not found.' });
 
-        const moment = require('moment-timezone');
         const now = moment().tz('Asia/Kolkata');
         const currentMonthStart = now.clone().startOf('month');
         const currentMonthEnd = now.clone().endOf('month');
         const today = now.clone().startOf('day');
 
-        // Fetch attendances for current month
-        const attendances = await prisma.attendance.findMany({
-            where: {
-                employeeId,
-                organizationCode: employee.organizationCode,
-                date: { gte: currentMonthStart.toDate(), lte: currentMonthEnd.toDate() }
-            }
-        });
-
-        const organization = await prisma.organization.findUnique({
-            where: { id: employee.organizationId },
-            select: { holidays: { where: { startDate: { lte: currentMonthEnd.toDate() }, endDate: { gte: currentMonthStart.toDate() } }, select: { startDate: true, endDate: true } } }
-        });
+        // Parallelise attendance + holiday fetch
+        const [attendances, organization] = await Promise.all([
+            prisma.attendance.findMany({
+                where: {
+                    employeeId,
+                    organizationCode: employee.organizationCode,
+                    date: { gte: currentMonthStart.toDate(), lte: currentMonthEnd.toDate() }
+                },
+                select: { finalRemark: true, totalHours: true, extraHours: true, date: true }
+            }),
+            prisma.organization.findUnique({
+                where: { id: employee.organizationId },
+                select: {
+                    holidays: {
+                        where: {
+                            startDate: { lte: currentMonthEnd.toDate() },
+                            endDate: { gte: currentMonthStart.toDate() }
+                        },
+                        select: { startDate: true, endDate: true }
+                    }
+                }
+            })
+        ]);
 
         const holidayDates = new Set();
         for (const h of (organization?.holidays || [])) {
@@ -452,7 +461,7 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
         let expectedWorkingDays = 0;
         let actualWorkingDays = 0;
         let completedWorkingHours = 0;
-        
+
         const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'];
         for (const a of attendances) {
             if (PRESENT_REMARKS.includes(a.finalRemark)) {
@@ -484,7 +493,7 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
             dailyShiftHours = shiftEnd.diff(shiftStart, 'hours', true);
             if (dailyShiftHours < 0) dailyShiftHours += 24; // overnight shift
         }
-        
+
         const expectedWorkingHours = parseFloat((expectedWorkingDays * dailyShiftHours).toFixed(2));
         completedWorkingHours = parseFloat(completedWorkingHours.toFixed(2));
         const salary = employee.salary || 0;
@@ -502,29 +511,19 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
     }
 });
 
+
 router.get('/all-present-days', authenticateJWT, async (req, res) => {
     // #swagger.tags = ['Attendance and Employee Management']
 
     try {
-        // Extract and verify JWT token
-        const token = req.headers.authorization?.split(' ')[1];
-        if (!token) {
-            return res.status(401).json({ message: 'Authorization token is required.' });
-        }
-
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const employee = await prisma.employee.findUnique({
-            where: { id: decoded.id }
-        });
-        if (!employee) {
-            return res.status(404).json({ message: 'Employee not found.' });
-        }
+        // req.user is already set by authenticateJWT middleware — no need to re-decode
+        const employeeId = req.user.id;
 
         // Fetch all records where the employee was present (finalRemark is NOT 'Absent')
         const presentDays = await prisma.attendance.findMany({
             where: {
-                employeeId: employee.id,
-                finalRemark: { not: 'Absent' } // Fetches only present days
+                employeeId,
+                finalRemark: { not: 'Absent' }
             },
             orderBy: { date: 'asc' },
             select: { date: true, finalRemark: true }
@@ -541,18 +540,12 @@ router.get('/profile', authenticateJWT, async (req, res) => {
     // #swagger.tags = ['Attendance and Employee Management']
 
     try {
-        // Check for the authorization header
-        const authHeader = req.headers.authorization;
-        if (!authHeader) {
-            return res.status(401).send({ message: 'Authorization header missing' });
-        }
-
-        const token = authHeader.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        // req.user is already set by authenticateJWT
+        const employeeId = req.user.id;
 
         // Fetch the employee by ID with populated organization details
         const employeeInstance = await prisma.employee.findUnique({
-            where: { id: decoded.id },
+            where: { id: employeeId },
             include: { organization: true, shift: true }
         });
         if (!employeeInstance) {
@@ -590,18 +583,13 @@ router.post('/upload-profile-pic', authenticateJWT, upload.single('profilePic'),
     // #swagger.tags = ['Attendance and Employee Management']
 
     try {
-        const authHeader = req.headers.authorization;
-        if (!authHeader) {
-            return res.status(401).send({ message: 'Authorization header missing' });
-        }
+        const employeeId = req.user.id;
 
-        const token = authHeader.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
         // Find the employee by ID
         const employeeInstance = await prisma.employee.findUnique({
-            where: { id: decoded.id }
+            where: { id: employeeId }
         });
-        console.log(decoded.id)
+
         if (!employeeInstance) {
             return res.status(404).send({ message: 'Employee not found' });
         }

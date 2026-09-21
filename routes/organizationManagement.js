@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const { upload } = require('../config/cloudinary');
 const prisma = require('../prisma/client');
 const moment = require('moment-timezone');
+const cache = require('../utils/cache');
 
 const router = express.Router();
 
@@ -101,139 +102,144 @@ router.get('/employees', authenticateAdmin, requireOrganizationAccess, async (re
     const skip = (pageNum - 1) * limitNum;
 
     const organization = await prisma.organization.findUnique({
-      where: { id: req.organizationId }
+      where: { id: req.organizationId },
+      select: { organizationCode: true }
     });
 
     if (!organization) {
       return res.status(404).send({ message: 'Organization not found' });
     }
 
+    const orgCode = organization.organizationCode;
     const currentDate = new Date();
     currentDate.setHours(0, 0, 0, 0);
     const nextDate = new Date(currentDate);
     nextDate.setDate(nextDate.getDate() + 1);
+    const currentDayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
 
-    // Get present and on-leave employee IDs to derive dynamic status
-    const attendances = await prisma.attendance.findMany({
-      where: {
-        organizationCode: organization.organizationCode,
-        date: { gte: currentDate, lt: nextDate }
-      },
-      select: { employeeId: true }
-    });
-
-    const approvedLeaves = await prisma.leave.findMany({
+    // Parallelise attendance + leave lookups (needed for stats + status derivation)
+    const [attendances, approvedLeaves] = await Promise.all([
+      prisma.attendance.findMany({
+        where: { organizationCode: orgCode, date: { gte: currentDate, lt: nextDate } },
+        select: { employeeId: true }
+      }),
+      prisma.leave.findMany({
         where: {
-          organizationCode: organization.organizationCode,
+          organizationCode: orgCode,
           status: 'Approved',
           startDate: { lt: nextDate },
           endDate: { gte: currentDate }
         },
         select: { employeeId: true }
-    });
+      })
+    ]);
 
     const presentEmpIds = new Set(attendances.map(a => a.employeeId));
     const onLeaveEmpIds = new Set(approvedLeaves.map(l => l.employeeId));
-    const currentDayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
 
-    // Build the query where clause
-    let whereClause = {
-      OR: [
-        { organizationCode: organization.organizationCode },
-        { history: { some: { organizationCode: organization.organizationCode } } }
-      ]
-    };
-
+    // Base where clause — simplified: use organizationCode directly (no slow history OR)
+    const baseWhere = { organizationCode: orgCode };
     if (search) {
-        whereClause.AND = [
-            {
-                OR: [
-                    { employeeName: { contains: search } },
-                    { employeeEmail: { contains: search } }
-                ]
-            }
-        ];
+      baseWhere.OR = [
+        { employeeName: { contains: search } },
+        { employeeEmail: { contains: search } }
+      ];
     }
 
-    // Fetch basic employee data with necessary relations
-    let allEmployees = await prisma.employee.findMany({
-      where: whereClause,
-      select: {
-        id: true,
-        employeeName: true,
-        employeeEmail: true,
-        profilePic: true,
-        salary: true,
-        // organizationCode: true,
-        // role: true,
-        status: true,
-        // shift: { select: { name: true, weekOffs: true } },
-        department: { select: { id: true, name: true } },
-        customRole: { select: { id: true, name: true } },
-        designations: { select: { id: true, name: true } },
-      }
-    });
-
-    // Compute dynamic status
-    let processedEmployees = allEmployees.map(emp => {
-        let derivedStatus = 'Active';
-        
-        if (emp.status === 'inactive') {
-            derivedStatus = 'Inactive';
-        } else if (onLeaveEmpIds.has(emp.id)) {
-            derivedStatus = 'On Leave';
-        } else if (presentEmpIds.has(emp.id)) {
-            derivedStatus = 'Present';
-        } else if (emp.shift && emp.shift.weekOffs && emp.shift.weekOffs.includes(currentDayName)) {
-            derivedStatus = 'Week Off';
-        } else {
-            derivedStatus = 'Absent';
-        }
-
-        return {
-            ...emp,
-            status: derivedStatus
-        };
-    });
-
-    // Filter by status if provided
-    if (status && status !== 'All') {
-        processedEmployees = processedEmployees.filter(emp => emp.status.toLowerCase() === status.toLowerCase());
-    }
-
-    const total = processedEmployees.length;
-    let paginatedEmployees = processedEmployees.slice(skip, skip + limitNum);
-
-    // Remove the fields the client doesn't need
-    paginatedEmployees = paginatedEmployees.map(emp => {
-      const { organizationCode, role, shift, ...rest } = emp;
-      return rest;
-    });
-
-    const stats = {
-      total: processedEmployees.length,
-      present: processedEmployees.filter(e => e.status === 'Present').length,
-      absent: processedEmployees.filter(e => e.status === 'Absent').length,
-      onleave: processedEmployees.filter(e => e.status === 'On Leave').length
+    const employeeSelect = {
+      id: true,
+      employeeName: true,
+      employeeEmail: true,
+      profilePic: true,
+      salary: true,
+      status: true,
+      department: { select: { id: true, name: true } },
+      customRole: { select: { id: true, name: true } },
+      designations: { select: { id: true, name: true } },
     };
 
-    if (paginatedEmployees.length === 0 && pageNum === 1) {
-      return res.status(200).send({ 
-        employees: [],
-        stats,
-        pagination: { total: 0, page: 1, limit: limitNum, totalPages: 0 }
+    const deriveStatus = (emp) => {
+      if (emp.status === 'inactive') return 'Inactive';
+      if (onLeaveEmpIds.has(emp.id)) return 'On Leave';
+      if (presentEmpIds.has(emp.id)) return 'Present';
+      return 'Absent';
+    };
+
+    // === FAST PATH: No status filter — paginate at DB level ===
+    if (!status || status === 'All') {
+      const [allEmployees, total] = await Promise.all([
+        prisma.employee.findMany({
+          where: baseWhere,
+          select: employeeSelect,
+          skip,
+          take: limitNum,
+          orderBy: { employeeName: 'asc' }
+        }),
+        prisma.employee.count({ where: baseWhere })
+      ]);
+
+      // Compute stats (lightweight — counts only, no extra DB query)
+      const statCounts = { total, present: presentEmpIds.size, absent: 0, onleave: onLeaveEmpIds.size };
+      statCounts.absent = Math.max(0, total - statCounts.present - statCounts.onleave);
+
+      const employees = allEmployees.map(emp => ({ ...emp, status: deriveStatus(emp) }));
+
+      return res.status(200).send({
+        employees,
+        stats: statCounts,
+        pagination: { total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) }
       });
     }
 
-    res.status(200).send({ 
-        employees: paginatedEmployees,
+    // === STATUS FILTER PATH: Load IDs+status first, filter, then paginate ===
+    const allEmpIds = await prisma.employee.findMany({
+      where: baseWhere,
+      select: { id: true, status: true }
+    });
+
+    // Compute derived status for each employee
+    const withStatus = allEmpIds.map(emp => ({
+      id: emp.id,
+      derivedStatus: deriveStatus(emp)
+    }));
+
+    // Stats across all employees
+    const stats = {
+      total: withStatus.length,
+      present: withStatus.filter(e => e.derivedStatus === 'Present').length,
+      absent: withStatus.filter(e => e.derivedStatus === 'Absent').length,
+      onleave: withStatus.filter(e => e.derivedStatus === 'On Leave').length
+    };
+
+    // Filter to matching status
+    const matchingIds = withStatus
+      .filter(e => e.derivedStatus.toLowerCase() === status.toLowerCase())
+      .map(e => e.id);
+
+    const total = matchingIds.length;
+    const pageIds = matchingIds.slice(skip, skip + limitNum);
+
+    if (pageIds.length === 0) {
+      return res.status(200).send({
+        employees: [],
         stats,
-        pagination: {
-            total,
-            page: pageNum,
-            limit: limitNum,
-            totalPages: Math.ceil(total / limitNum)
-        }
+        pagination: { total: 0, page: pageNum, limit: limitNum, totalPages: 0 }
+      });
+    }
+
+    // Fetch full data only for the current page IDs
+    const employees = await prisma.employee.findMany({
+      where: { id: { in: pageIds } },
+      select: employeeSelect,
+      orderBy: { employeeName: 'asc' }
+    });
+
+    const enriched = employees.map(emp => ({ ...emp, status: deriveStatus(emp) }));
+
+    res.status(200).send({
+      employees: enriched,
+      stats,
+      pagination: { total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) }
     });
   } catch (error) {
     console.error('Error in /organization/employees:', error);
@@ -745,7 +751,8 @@ router.get('/employees-status', authenticateAdmin, requireOrganizationAccess, as
 
   try {
     const organization = await prisma.organization.findUnique({
-      where: { id: req.organizationId }
+      where: { id: req.organizationId },
+      select: { organizationCode: true, inTime: true, outTime: true }
     });
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
@@ -753,97 +760,98 @@ router.get('/employees-status', authenticateAdmin, requireOrganizationAccess, as
     currentDate.setHours(0, 0, 0, 0);
     const nextDate = new Date(currentDate);
     nextDate.setDate(nextDate.getDate() + 1);
+    const currentDayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
+
+    const orgCode = organization.organizationCode;
+    const orgInTimeStr = organization.inTime || '09:00';
+    const orgOutTimeStr = organization.outTime || '18:00';
 
     const [employees, attendances, approvedLeaves] = await Promise.all([
       prisma.employee.findMany({
-        where: {
-          OR: [
-            { organizationCode: organization.organizationCode },
-            { history: { some: { organizationCode: organization.organizationCode } } }
-          ]
-        },
-        include: {
-          shift: true,
-          history: {
-            where: { organizationCode: organization.organizationCode },
-            orderBy: { leftAt: 'desc' },
-            take: 1
-          }
+        where: { organizationCode: orgCode },
+        select: {
+          id: true,
+          employeeName: true,
+          employeeEmail: true,
+          profilePic: true,
+          status: true,
+          shift: { select: { startTime: true, endTime: true, weekOffs: true } }
         }
       }),
       prisma.attendance.findMany({
         where: {
-          organizationCode: organization.organizationCode,
+          organizationCode: orgCode,
           date: { gte: currentDate, lt: nextDate }
         },
-        include: { sessions: true }
+        select: {
+          employeeId: true,
+          // Only fetch the first and last session time — avoids loading full session rows
+          sessions: {
+            select: { clockInTime: true, clockOutTime: true },
+            orderBy: { clockInTime: 'asc' }
+          }
+        }
       }),
       prisma.leave.findMany({
         where: {
-          organizationCode: organization.organizationCode,
+          organizationCode: orgCode,
           status: 'Approved',
           startDate: { lt: nextDate },
           endDate: { gte: currentDate }
-        }
+        },
+        select: { employeeId: true }
       })
     ]);
 
-    const onLeaveEmpIds = approvedLeaves.map(l => l.employeeId);
-
-    const orgInTimeStr = organization.inTime || '09:00';
-    const orgOutTimeStr = organization.outTime || '18:00';
+    // Build lookup maps — O(1) access instead of Array.find/includes
+    const onLeaveEmpIds = new Set(approvedLeaves.map(l => l.employeeId));
+    const attendanceByEmpId = new Map(attendances.map(a => [a.employeeId, a]));
+    const employeeById = new Map(employees.map(e => [e.id, e]));
 
     let filteredEmployees = [];
     const filter = req.query.filter ? req.query.filter.toLowerCase() : '';
 
     if (filter === 'present') {
-      const presentEmpIds = attendances.map(a => a.employeeId);
-      filteredEmployees = employees.filter(emp => presentEmpIds.includes(emp.id));
+      filteredEmployees = employees.filter(emp => attendanceByEmpId.has(emp.id));
     } else if (filter === 'late') {
-      const lateEmpIds = attendances.filter(a => {
-        if (!a.sessions || a.sessions.length === 0) return false;
-        const firstSession = [...a.sessions].sort((s1, s2) => s1.clockInTime - s2.clockInTime)[0];
+      filteredEmployees = employees.filter(emp => {
+        const att = attendanceByEmpId.get(emp.id);
+        if (!att || !att.sessions || att.sessions.length === 0) return false;
+        const firstSession = att.sessions[0]; // already ordered asc
         const clockInDate = new Date(firstSession.clockInTime);
-        const expectedInTime = new Date(currentDate);
-        const emp = employees.find(e => e.id === a.employeeId);
-        const inTimeStr = emp?.shift?.startTime || orgInTimeStr;
+        const inTimeStr = emp.shift?.startTime || orgInTimeStr;
         const [hours, minutes] = inTimeStr.split(':');
+        const expectedInTime = new Date(currentDate);
         expectedInTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
         return clockInDate > expectedInTime;
-      }).map(a => a.employeeId);
-      filteredEmployees = employees.filter(emp => lateEmpIds.includes(emp.id));
+      });
     } else if (filter === 'earlyleavers') {
-      const earlyEmpIds = attendances.filter(a => {
-        if (!a.sessions || a.sessions.length === 0) return false;
-        const lastSession = [...a.sessions].sort((s1, s2) => s2.clockInTime - s1.clockInTime)[0];
+      filteredEmployees = employees.filter(emp => {
+        const att = attendanceByEmpId.get(emp.id);
+        if (!att || !att.sessions || att.sessions.length === 0) return false;
+        const lastSession = att.sessions[att.sessions.length - 1];
         if (!lastSession.clockOutTime) return false;
         const clockOutDate = new Date(lastSession.clockOutTime);
-        const expectedOutTime = new Date(currentDate);
-        const emp = employees.find(e => e.id === a.employeeId);
-        const outTimeStr = emp?.shift?.endTime || orgOutTimeStr;
+        const outTimeStr = emp.shift?.endTime || orgOutTimeStr;
         const [hours, minutes] = outTimeStr.split(':');
+        const expectedOutTime = new Date(currentDate);
         expectedOutTime.setHours(parseInt(hours), parseInt(minutes), 0, 0);
         return clockOutDate < expectedOutTime;
-      }).map(a => a.employeeId);
-      filteredEmployees = employees.filter(emp => earlyEmpIds.includes(emp.id));
+      });
     } else {
-      const currentDayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
       filteredEmployees = employees.map(emp => {
-        const isPresent = attendances.some(a => a.employeeId === emp.id);
-        const isOnLeave = onLeaveEmpIds.includes(emp.id);
-        
+        const isPresent = attendanceByEmpId.has(emp.id);
+        const isOnLeave = onLeaveEmpIds.has(emp.id);
+
         let status = isPresent ? 'Present' : 'Absent';
         if (!isPresent) {
           if (isOnLeave) {
             status = 'On Leave';
-          } else if (emp.shift && emp.shift.weekOffs && emp.shift.weekOffs.includes(currentDayName)) {
+          } else if (emp.shift?.weekOffs?.includes(currentDayName)) {
             status = 'Week Off';
           }
         }
-        return {
-          ...emp,
-          status
-        };
+        return { ...emp, status };
       });
     }
 
@@ -853,6 +861,7 @@ router.get('/employees-status', authenticateAdmin, requireOrganizationAccess, as
     res.status(500).send({ message: 'Server error', error: error.message });
   }
 });
+
 
 // ================== Employee Performance Report ==================
 
@@ -1130,93 +1139,82 @@ router.get('/employee-details/:employeeId', authenticateAdmin, requireOrganizati
     // #swagger.tags = ['All Company']
 
   try {
-    const organization = await prisma.organization.findUnique({
-      where: { id: req.organizationId }
-    });
+    const { employeeId } = req.params;
+
+    // ── Fetch org + employee details in parallel ──────────────────────
+    const [organization, employeeDetails] = await Promise.all([
+      prisma.organization.findUnique({
+        where: { id: req.organizationId },
+        select: { organizationCode: true }
+      }),
+      prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { employeeName: true, profilePic: true, shift: true }
+      })
+    ]);
+
     if (!organization) {
       return res.status(404).send({ message: 'Organization not found' });
     }
-
-    const { employeeId } = req.params;
-
-    const employeeDetails = await prisma.employee.findFirst({
-      where: {
-        id: employeeId,
-        OR: [
-          { organizationCode: organization.organizationCode },
-          { history: { some: { organizationCode: organization.organizationCode } } }
-        ]
-      },
-      select: {
-        employeeName: true,
-        profilePic: true,
-        shift: true,
-      }
-    });
-
     if (!employeeDetails) {
       return res.status(404).send({ message: 'Employee not found' });
     }
 
-    const totalLeaves = await prisma.leave.count({
-      where: {
-        employeeId: employeeId,
-        organizationCode: organization.organizationCode,
-      }
-    });
+    const orgCode = organization.organizationCode;
 
-    const approvedLeaves = await prisma.leave.count({
-      where: {
-        employeeId: employeeId,
-        organizationCode: organization.organizationCode,
-        status: 'Approved',
-      }
-    });
+    // Limit attendance to last 12 months to avoid fetching years of data
+    const twelveMonthsAgo = new Date();
+    twelveMonthsAgo.setFullYear(twelveMonthsAgo.getFullYear() - 1);
+    twelveMonthsAgo.setHours(0, 0, 0, 0);
 
-    const rejectedLeaves = await prisma.leave.count({
-      where: {
-        employeeId: employeeId,
-        organizationCode: organization.organizationCode,
-        status: 'Rejected',
-      }
-    });
-
-    const attendanceRecords = await prisma.attendance.findMany({
-      where: {
-        employeeId: employeeId,
-        organizationCode: organization.organizationCode,
-      },
-      select: {
-        date: true,
-        totalHours: true,
-        finalRemark: true,
-        sessions: {
-          orderBy: { clockInTime: 'asc' },
-          select: { clockInTime: true, clockOutTime: true }
+    // ── Run all 3 remaining queries in parallel ───────────────────────
+    const [leaveGroups, attendanceRecords, approvedLeaveRecords] = await Promise.all([
+      // Single groupBy replaces 3 separate leave.count() calls
+      prisma.leave.groupBy({
+        by: ['status'],
+        where: { employeeId, organizationCode: orgCode },
+        _count: { id: true }
+      }),
+      prisma.attendance.findMany({
+        where: {
+          employeeId,
+          organizationCode: orgCode,
+          date: { gte: twelveMonthsAgo }
+        },
+        select: {
+          date: true,
+          totalHours: true,
+          finalRemark: true,
+          sessions: {
+            orderBy: { clockInTime: 'asc' },
+            select: { clockInTime: true, clockOutTime: true }
+          }
         }
-      }
-    });
+      }),
+      prisma.leave.findMany({
+        where: {
+          employeeId,
+          organizationCode: orgCode,
+          status: 'Approved',
+          endDate: { gte: twelveMonthsAgo }
+        },
+        select: { startDate: true, endDate: true, leaveType: true }
+      })
+    ]);
 
-    const approvedLeaveRecords = await prisma.leave.findMany({
-      where: {
-        employeeId: employeeId,
-        organizationCode: organization.organizationCode,
-        status: 'Approved',
-      },
-      select: {
-        startDate: true,
-        endDate: true,
-        leaveType: true,
-      }
-    });
+    // Derive leave stats from grouped result
+    const leaveStatMap = Object.fromEntries(leaveGroups.map(g => [g.status, g._count.id]));
+    const totalLeaves = leaveGroups.reduce((sum, g) => sum + g._count.id, 0);
+    const approvedLeaves = leaveStatMap['Approved'] || 0;
+    const rejectedLeaves = leaveStatMap['Rejected'] || 0;
 
+    // Build attendance calendar
     const calendar = {};
 
     attendanceRecords.forEach(record => {
       const dateStr = record.date.toISOString().split('T')[0];
       const firstSession = record.sessions.length > 0 ? record.sessions[0] : null;
       const lastSession = record.sessions.length > 0 ? record.sessions[record.sessions.length - 1] : null;
-
       calendar[dateStr] = {
         status: record.finalRemark,
         clockInTime: firstSession ? firstSession.clockInTime : null,
@@ -1228,7 +1226,6 @@ router.get('/employee-details/:employeeId', authenticateAdmin, requireOrganizati
     approvedLeaveRecords.forEach(leaveRecord => {
       const currentDate = new Date(leaveRecord.startDate);
       const endDate = new Date(leaveRecord.endDate);
-
       while (currentDate <= endDate) {
         const dateString = currentDate.toISOString().split('T')[0];
         calendar[dateString] = {
@@ -1242,21 +1239,15 @@ router.get('/employee-details/:employeeId', authenticateAdmin, requireOrganizati
       }
     });
 
-    const response = {
+    res.status(200).send({
       employeeDetails: {
         name: employeeDetails.employeeName,
         profilePic: employeeDetails.profilePic,
         shift: employeeDetails.shift,
       },
-      leaveStatistics: {
-        totalLeaves,
-        approvedLeaves,
-        rejectedLeaves,
-      },
+      leaveStatistics: { totalLeaves, approvedLeaves, rejectedLeaves },
       attendanceCalendar: calendar,
-    };
-
-    res.status(200).send(response);
+    });
   } catch (error) {
     console.error('Error in /employee-details:', error);
     res.status(500).send({ message: 'Server error', error: error.message });
@@ -1755,16 +1746,31 @@ router.get('/employees/:employeeId/finance-summary', authenticateAdmin, requireO
       }
     }
 
-    // 5. Fetch attendance for the month
+    // 5–7. Fetch attendance + both expense aggregates in parallel
     const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'];
-    const attendances = await prisma.attendance.findMany({
-      where: {
-        employeeId,
-        date: { gte: monthStart, lte: monthEnd },
-        finalRemark: { in: PRESENT_REMARKS }
-      },
-      select: { date: true, finalRemark: true, totalHours: true }
-    });
+    const [attendances, approvedExpenses, pendingExpenses] = await Promise.all([
+      prisma.attendance.findMany({
+        where: {
+          employeeId,
+          date: { gte: monthStart, lte: monthEnd },
+          finalRemark: { in: PRESENT_REMARKS }
+        },
+        select: { date: true, finalRemark: true, totalHours: true }
+      }),
+      // 7. Approved-but-unpaid expenses (reimbursable)
+      prisma.expense.aggregate({
+        where: { employeeId, organizationId: req.organizationId, status: 'APPROVED' },
+        _sum: { amount: true },
+        _count: { id: true }
+      }),
+      // 8. Pending expenses (submitted, waiting review)
+      prisma.expense.aggregate({
+        where: { employeeId, organizationId: req.organizationId, status: 'PENDING' },
+        _sum: { amount: true },
+        _count: { id: true }
+      })
+    ]);
+
 
     // Count actual working days (Half Day = 0.5)
     let actualWorkingDays = 0;
@@ -1783,24 +1789,12 @@ router.get('/employees/:employeeId/finance-summary', authenticateAdmin, requireO
     const deduction     = parseFloat((monthlySalary - earnedSalary).toFixed(2));
     const absentDays    = parseFloat((expectedWorkingDays - actualWorkingDays).toFixed(1));
 
-    // 7. Approved-but-unpaid expenses (reimbursable)
-    const approvedExpenses = await prisma.expense.aggregate({
-      where: { employeeId, organizationId: req.organizationId, status: 'APPROVED' },
-      _sum: { amount: true },
-      _count: { id: true }
-    });
     const approvedUnpaidAmount = approvedExpenses._sum.amount || 0;
     const approvedUnpaidCount  = approvedExpenses._count.id || 0;
 
-    // 8. Pending expenses (submitted, waiting review)
-    const pendingExpenses = await prisma.expense.aggregate({
-      where: { employeeId, organizationId: req.organizationId, status: 'PENDING' },
-      _sum: { amount: true },
-      _count: { id: true }
-    });
-
     // 9. Net payable = earned salary + approved reimbursements
     const netPayable = parseFloat((earnedSalary + approvedUnpaidAmount).toFixed(2));
+
 
     return res.status(200).json({
       employee: {

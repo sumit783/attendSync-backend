@@ -3,37 +3,46 @@ const router = express.Router();
 const prisma = require('../prisma/client');
 const authenticateAdmin = require('../middleware/authenticateAdmin');
 const moment = require('moment-timezone');
+const cache = require('../utils/cache');
 
 // Helper to determine orgs to query
 const getOrgIdsToQuery = async (adminId, requestedCompanyId) => {
-    // Basic logic to get accessible orgs based on requestedCompanyId
+    // Cache org hierarchy per admin for 5 minutes
+    const cacheKey = `orgIds:${adminId}:${requestedCompanyId}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return cached;
+
     if (requestedCompanyId && requestedCompanyId !== 'all') {
-        // Just checking access isn't strictly necessary here if we assume authenticateAdmin checks basic auth, 
-        // but we should return the requested one if it's not 'all'.
+        cache.set(cacheKey, [requestedCompanyId], 300);
         return [requestedCompanyId];
     }
-    
+
     // If 'all', find all orgs accessible to this admin
     const roles = await prisma.adminRole.findMany({
-        where: { adminId: adminId }
+        where: { adminId },
+        select: { organizationId: true }
     });
-    
-    let orgIds = [];
-    for (const role of roles) {
-        if (role.organizationId) {
-            orgIds.push(role.organizationId);
-            const children = await prisma.organization.findMany({
-                where: { parentId: role.organizationId },
-                select: { id: true }
-            });
-            children.forEach(c => orgIds.push(c.id));
-        } else {
-            // Global admin
-            const allOrgs = await prisma.organization.findMany({ select: { id: true } });
-            return allOrgs.map(o => o.id);
-        }
+
+    // Check for global admin (role with no organizationId)
+    const isGlobalAdmin = roles.some(r => !r.organizationId);
+    if (isGlobalAdmin) {
+        const allOrgs = await prisma.organization.findMany({ select: { id: true } });
+        const ids = allOrgs.map(o => o.id);
+        cache.set(cacheKey, ids, 300);
+        return ids;
     }
-    return [...new Set(orgIds)]; // unique
+
+    const parentOrgIds = roles.map(r => r.organizationId).filter(Boolean);
+
+    // Single bulk query for all children — eliminates N+1 loop
+    const children = await prisma.organization.findMany({
+        where: { parentId: { in: parentOrgIds } },
+        select: { id: true }
+    });
+
+    const orgIds = [...new Set([...parentOrgIds, ...children.map(c => c.id)])];
+    cache.set(cacheKey, orgIds, 300);
+    return orgIds;
 };
 
 // GET /api/organization/analytics/companies

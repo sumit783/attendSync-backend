@@ -91,6 +91,8 @@ model Employee {
   expenses      Expense[]
 
   @@index([organizationCode])
+  @@index([organizationId, status])
+  @@index([organizationCode, status])
 }
 
 model Shift {
@@ -147,6 +149,7 @@ model Attendance {
 
   @@index([employeeId, date])
   @@index([organizationCode, date])
+  @@index([organizationCode, finalRemark])
 }
 
 model Session {
@@ -177,6 +180,7 @@ model Leave {
 
   @@index([employeeId, startDate, endDate])
   @@index([organizationCode, startDate, endDate])
+  @@index([organizationCode, status, startDate, endDate])
 }
 
 model Notification {
@@ -316,6 +320,8 @@ model EmploymentHistory {
   status           String    @default("inactive")
   joinedAt         DateTime  @default(now())
   leftAt           DateTime?
+
+  @@index([organizationCode])
 }
 
 model Admin {

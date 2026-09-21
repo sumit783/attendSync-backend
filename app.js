@@ -111,6 +111,13 @@ app.use(hpp());
 // Compress responses
 app.use(compression());
 
+// Set Cache-Control headers for API routes
+app.use('/api', (req, res, next) => {
+  // Prevent shared CDNs from caching, but allow browser ETag revalidation
+  res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
+  next();
+});
+
 // AbsenceMarker();
 
 // Routes

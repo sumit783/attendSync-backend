@@ -10,28 +10,33 @@ exports.getCompanyComparison = async (req, res) => {
 
     // If orgIds not attached by middleware, look them up for this admin
     if (orgIds.length === 0 && adminId) {
-      const superRoles = await prisma.adminRole.findMany({
-        where: { adminId: adminId, role: 'SUPER_ADMIN' }
-      });
+      const superRoles = req.adminRoles
+        ? req.adminRoles.filter(r => r.role === 'SUPER_ADMIN')
+        : await prisma.adminRole.findMany({
+            where: { adminId: adminId, role: 'SUPER_ADMIN' }
+          });
 
       if (superRoles && superRoles.length > 0) {
-        const collectedIds = [];
-        for (const role of superRoles) {
-          if (role.organizationId) {
-            collectedIds.push(role.organizationId);
-            const children = await prisma.organization.findMany({
-              where: { parentId: role.organizationId },
-              select: { id: true }
-            });
-            children.forEach(c => collectedIds.push(c.id));
-          } else {
-            const allOrgs = await prisma.organization.findMany({ select: { id: true } });
-            orgIds = allOrgs.map(o => o.id);
-            break;
-          }
+        const parentIds = superRoles.map(r => r.organizationId).filter(Boolean);
+        if (parentIds.length > 0) {
+          const children = await prisma.organization.findMany({
+            where: { parentId: { in: parentIds } },
+            select: { id: true }
+          });
+          orgIds = [...new Set([...parentIds, ...children.map(c => c.id)])];
+        } else if (superRoles.some(r => !r.organizationId)) {
+          const allOrgs = await prisma.organization.findMany({ select: { id: true } });
+          orgIds = allOrgs.map(o => o.id);
         }
-        if (orgIds.length === 0) {
-          orgIds = [...new Set(collectedIds)];
+      }
+
+      // Fallback: If no super role, look up any organizations the admin belongs to
+      if (orgIds.length === 0) {
+        const adminRoles = req.adminRoles || await prisma.adminRole.findMany({
+          where: { adminId: adminId }
+        });
+        if (adminRoles && adminRoles.length > 0) {
+          orgIds = [...new Set(adminRoles.map(r => r.organizationId).filter(Boolean))];
         }
       }
     }
@@ -100,63 +105,120 @@ exports.getCompanyComparison = async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
-    const companies = [];
-
-    for (let i = 0; i < orgs.length; i++) {
-      const org = orgs[i];
-
-      // 1. Employee Count
-      const activeEmployees = await prisma.employee.count({
-        where: { organizationId: org.id, status: 'active' }
+    if (orgs.length === 0) {
+      return res.status(200).json({
+        period: req.query.period || req.query.month || moment(startPeriod).format('MMM YYYY'),
+        startDate: startPeriod,
+        endDate: endPeriod,
+        summary: {
+          totalEmployees: 0,
+          avgAttendance: 0,
+          totalSalary: '₹0L',
+          totalSalaryNum: 0,
+          totalRevenue: '₹0L',
+          totalRevenueNum: 0
+        },
+        companies: []
       });
-      const employees = activeEmployees > 0 ? activeEmployees : (org.employeeCount || 0);
+    }
 
-      // 2. Attendance Benchmark
-      const totalAttendance = await prisma.attendance.count({
-        where: {
-          employee: { organizationId: org.id },
-          date: { gte: startPeriod, lte: endPeriod }
-        }
-      });
-      const presentAttendance = await prisma.attendance.count({
-        where: {
-          employee: { organizationId: org.id },
-          date: { gte: startPeriod, lte: endPeriod },
-          finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] }
-        }
-      });
+    const validOrgIds = orgs.map(o => o.id);
+    const validOrgCodes = orgs.map(o => o.organizationCode).filter(Boolean);
 
-      const attendanceRate = totalAttendance > 0 
-        ? Math.min(100, Math.round((presentAttendance / totalAttendance) * 100)) 
-        : 0;
-
-      // 3. Salary Cost
-      const salaryAgg = await prisma.employee.aggregate({
-        where: { organizationId: org.id, status: 'active' },
+    // Run batch aggregations in parallel via Promise.all (single roundtrip instead of N loops)
+    const [employeeGroupStats, totalAttStats, presentAttStats, expenseGroupStats] = await Promise.all([
+      // 1. Employee count & salary sum grouped by organizationId
+      prisma.employee.groupBy({
+        by: ['organizationId'],
+        where: { organizationId: { in: validOrgIds }, status: 'active' },
+        _count: { id: true },
         _sum: { salary: true }
-      });
-      const rawSalary = salaryAgg._sum.salary || 0;
-      const salaryNum = rawSalary > 0 ? parseFloat((rawSalary / 100000).toFixed(1)) : 0;
-      const salaryCost = `₹${salaryNum}L`;
+      }),
 
-      // 4. Expenses
-      const expenseAgg = await prisma.expense.aggregate({
+      // 2. Total attendance grouped by organizationCode (using index [organizationCode, date])
+      validOrgCodes.length > 0
+        ? prisma.attendance.groupBy({
+            by: ['organizationCode'],
+            where: {
+              organizationCode: { in: validOrgCodes },
+              date: { gte: startPeriod, lte: endPeriod }
+            },
+            _count: { id: true }
+          })
+        : [],
+
+      // 3. Present attendance grouped by organizationCode (using index [organizationCode, date])
+      validOrgCodes.length > 0
+        ? prisma.attendance.groupBy({
+            by: ['organizationCode'],
+            where: {
+              organizationCode: { in: validOrgCodes },
+              date: { gte: startPeriod, lte: endPeriod },
+              finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early', 'On Time', 'Late', 'Early Login'] }
+            },
+            _count: { id: true }
+          })
+        : [],
+
+      // 4. Expenses sum grouped by organizationId
+      prisma.expense.groupBy({
+        by: ['organizationId'],
         where: {
-          organizationId: org.id,
+          organizationId: { in: validOrgIds },
           status: { in: ['APPROVED', 'PAID'] },
           createdAt: { gte: startPeriod, lte: endPeriod }
         },
         _sum: { amount: true }
+      })
+    ]);
+
+    // Build lookup maps for O(1) in-memory resolution
+    const empStatsMap = new Map();
+    employeeGroupStats.forEach(item => {
+      empStatsMap.set(item.organizationId, {
+        count: item._count.id || 0,
+        salarySum: item._sum.salary || 0
       });
-      const rawExpense = expenseAgg._sum.amount || 0;
+    });
+
+    const totalAttMap = new Map();
+    totalAttStats.forEach(item => {
+      totalAttMap.set(item.organizationCode, item._count.id || 0);
+    });
+
+    const presentAttMap = new Map();
+    presentAttStats.forEach(item => {
+      presentAttMap.set(item.organizationCode, item._count.id || 0);
+    });
+
+    const expenseMap = new Map();
+    expenseGroupStats.forEach(item => {
+      expenseMap.set(item.organizationId, item._sum.amount || 0);
+    });
+
+    const companies = orgs.map((org, i) => {
+      const empStat = empStatsMap.get(org.id) || { count: 0, salarySum: 0 };
+      const employees = empStat.count > 0 ? empStat.count : (org.employeeCount || 0);
+
+      const totalAttendance = totalAttMap.get(org.organizationCode) || 0;
+      const presentAttendance = presentAttMap.get(org.organizationCode) || 0;
+
+      const attendanceRate = totalAttendance > 0
+        ? Math.min(100, Math.round((presentAttendance / totalAttendance) * 100))
+        : 0;
+
+      const rawSalary = empStat.salarySum || 0;
+      const salaryNum = rawSalary > 0 ? parseFloat((rawSalary / 100000).toFixed(1)) : 0;
+      const salaryCost = `₹${salaryNum}L`;
+
+      const rawExpense = expenseMap.get(org.id) || 0;
       const expenseNum = rawExpense > 0 ? parseFloat((rawExpense / 100000).toFixed(1)) : 0;
       const expenses = `₹${expenseNum}L`;
 
-      // 5. Growth & Palette Color
       const growth = 0;
       const color = PALETTE[i % PALETTE.length];
 
-      companies.push({
+      return {
         id: org.id,
         name: org.organizationName,
         organizationCode: org.organizationCode,
@@ -170,12 +232,12 @@ exports.getCompanyComparison = async (req, res) => {
         expenses,
         growth,
         color
-      });
-    }
+      };
+    });
 
     const totalEmployees = companies.reduce((acc, c) => acc + c.employees, 0);
-    const avgAttendance = companies.length > 0 
-      ? Math.round(companies.reduce((acc, c) => acc + c.attendance, 0) / companies.length) 
+    const avgAttendance = companies.length > 0
+      ? Math.round(companies.reduce((acc, c) => acc + c.attendance, 0) / companies.length)
       : 0;
     const totalSalaryNum = parseFloat(companies.reduce((acc, c) => acc + c.salaryNum, 0).toFixed(1));
     const totalRevenueNum = parseFloat(companies.reduce((acc, c) => acc + c.revenueNum, 0).toFixed(1));

@@ -1,9 +1,16 @@
 const prisma = require('../prisma/client');
+const cache = require('../utils/cache');
 
 exports.getOverviewStats = async (req, res) => {
   // #swagger.tags = ['Dashboard']
   try {
     const organizationId = req.organizationId;
+
+    // Cache overview stats per org for 60 seconds
+    const cacheKey = `dashboard:overview:${organizationId}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return res.status(200).json(cached);
+
     const organization = await prisma.organization.findUnique({
       where: { id: organizationId },
       select: { organizationCode: true, inTime: true }
@@ -18,42 +25,40 @@ exports.getOverviewStats = async (req, res) => {
     const nextDate = new Date(currentDate);
     nextDate.setDate(nextDate.getDate() + 1);
 
-    // 1. Total Employees
-    const totalEmployees = await prisma.employee.count({
-      where: {
-        OR: [
-          { organizationCode: organization.organizationCode },
-          { history: { some: { organizationCode: organization.organizationCode } } }
-        ]
-      }
-    });
-
-    // 2. Attendances Today
-    const attendances = await prisma.attendance.findMany({
-      where: {
-        organizationCode: organization.organizationCode,
-        date: { gte: currentDate, lt: nextDate }
-      },
-      include: {
-        sessions: true,
-        employee: {
-          select: { shift: { select: { startTime: true } } }
+    // Run all three DB queries in parallel
+    const [totalEmployees, attendances] = await Promise.all([
+      prisma.employee.count({
+        where: { organizationCode: organization.organizationCode }
+      }),
+      prisma.attendance.findMany({
+        where: {
+          organizationCode: organization.organizationCode,
+          date: { gte: currentDate, lt: nextDate }
+        },
+        select: {
+          sessions: {
+            select: { clockInTime: true },
+            orderBy: { clockInTime: 'asc' },
+            take: 1
+          },
+          employee: {
+            select: { shift: { select: { startTime: true } } }
+          }
         }
-      }
-    });
+      })
+    ]);
 
     const present = attendances.length;
     const absent = Math.max(0, totalEmployees - present);
 
-    // Calculate Late
+    // Calculate Late — use the first session clockInTime (already ordered)
     const orgInTimeStr = organization.inTime || '09:00';
     let late = 0;
 
     attendances.forEach(a => {
       if (!a.sessions || a.sessions.length === 0) return;
-      const firstSession = [...a.sessions].sort((s1, s2) => new Date(s1.clockInTime) - new Date(s2.clockInTime))[0];
-      const clockInDate = new Date(firstSession.clockInTime);
-      
+      const clockInDate = new Date(a.sessions[0].clockInTime);
+
       const expectedInTime = new Date(currentDate);
       const inTimeStr = a.employee?.shift?.startTime || orgInTimeStr;
       const [hours, minutes] = inTimeStr.split(':');
@@ -68,15 +73,10 @@ exports.getOverviewStats = async (req, res) => {
     const absentPercent = totalEmployees > 0 ? ((absent / totalEmployees) * 100).toFixed(1) : '0.0';
     const latePercent = totalEmployees > 0 ? ((late / totalEmployees) * 100).toFixed(1) : '0.0';
 
-    res.status(200).json({
-      total: totalEmployees,
-      present,
-      absent,
-      late,
-      presentPercent,
-      absentPercent,
-      latePercent
-    });
+    const result = { total: totalEmployees, present, absent, late, presentPercent, absentPercent, latePercent };
+    cache.set(cacheKey, result, 60); // cache for 60 seconds
+
+    res.status(200).json(result);
   } catch (error) {
     console.error('Error fetching overview stats:', error);
     res.status(500).json({ message: 'Internal Server Error' });
@@ -87,6 +87,12 @@ exports.getPayrollDistribution = async (req, res) => {
   // #swagger.tags = ['Dashboard']
   try {
     const organizationId = req.organizationId;
+
+    // Cache payroll distribution per org for 5 minutes (salary data changes rarely)
+    const cacheKey = `dashboard:payroll:${organizationId}`;
+    const cached = cache.get(cacheKey);
+    if (cached) return res.status(200).json(cached);
+
     const organization = await prisma.organization.findUnique({
       where: { id: organizationId },
       select: { organizationCode: true }
@@ -94,14 +100,11 @@ exports.getPayrollDistribution = async (req, res) => {
 
     if (!organization) return res.status(404).json({ message: 'Organization not found' });
 
+    // Use select instead of include — only fetch what we need
     const employees = await prisma.employee.findMany({
-      where: {
-        OR: [
-          { organizationCode: organization.organizationCode },
-          { history: { some: { organizationCode: organization.organizationCode } } }
-        ]
-      },
-      include: {
+      where: { organizationCode: organization.organizationCode },
+      select: {
+        salary: true,
         department: { select: { name: true } }
       }
     });
@@ -124,7 +127,7 @@ exports.getPayrollDistribution = async (req, res) => {
     });
 
     const PALETTE_COLORS = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#6366f1', '#f97316'];
-    
+
     const salaryPieData = Array.from(deptPayrollMap.entries()).map(([name, data], idx) => ({
       name,
       value: data.totalSalary,
@@ -133,10 +136,10 @@ exports.getPayrollDistribution = async (req, res) => {
       percent: totalMonthlyPayroll > 0 ? Math.round((data.totalSalary / totalMonthlyPayroll) * 100) : 0,
     })).sort((a, b) => b.value - a.value);
 
-    res.status(200).json({
-      totalMonthlyPayroll,
-      salaryPieData
-    });
+    const result = { totalMonthlyPayroll, salaryPieData };
+    cache.set(cacheKey, result, 300); // cache for 5 minutes
+
+    res.status(200).json(result);
   } catch (error) {
     console.error('Error fetching payroll distribution:', error);
     res.status(500).json({ message: 'Internal Server Error' });
@@ -155,7 +158,8 @@ exports.getExpenseDistribution = async (req, res) => {
     if (!organization) return res.status(404).json({ message: 'Organization not found' });
 
     const expenses = await prisma.expense.findMany({
-      where: { organizationCode: organization.organizationCode }
+      where: { organizationCode: organization.organizationCode },
+      select: { amount: true, type: true, status: true }
     });
 
     let totalExpenseAmount = 0;

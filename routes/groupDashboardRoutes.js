@@ -70,32 +70,35 @@ router.get('/stats', async (req, res) => {
         // Managed Companies
         const managedCompanies = orgIds.length;
 
-        // Total Workforce
-        const totalWorkforce = await prisma.employee.count({
-            where: { organizationId: { in: orgIds }, status: 'active' }
-        });
-
-        // Present Today
         const today = moment().tz('Asia/Kolkata').startOf('day').toDate();
         const endOfToday = moment().tz('Asia/Kolkata').endOf('day').toDate();
         
-        const presentToday = await prisma.attendance.count({
-            where: {
-                employee: { organizationId: { in: orgIds } },
-                date: { gte: today, lte: endOfToday },
-                finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] }
-            }
+        const orgs = await prisma.organization.findMany({
+            where: { id: { in: orgIds } },
+            select: { organizationCode: true }
         });
+        const orgCodes = orgs.map(o => o.organizationCode).filter(Boolean);
 
-        // On Leave Today
-        const onLeaveToday = await prisma.leave.count({
-            where: {
-                employee: { organizationId: { in: orgIds } },
-                status: 'Approved',
-                startDate: { lte: endOfToday },
-                endDate: { gte: today }
-            }
-        });
+        const [totalWorkforce, presentToday, onLeaveToday] = await Promise.all([
+            prisma.employee.count({
+                where: { organizationId: { in: orgIds }, status: 'active' }
+            }),
+            prisma.attendance.count({
+                where: {
+                    organizationCode: { in: orgCodes },
+                    date: { gte: today, lte: endOfToday },
+                    finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] }
+                }
+            }),
+            prisma.leave.count({
+                where: {
+                    organizationCode: { in: orgCodes },
+                    status: 'Approved',
+                    startDate: { lte: endOfToday },
+                    endDate: { gte: today }
+                }
+            })
+        ]);
 
         res.status(200).send({
             managedCompanies,
@@ -121,41 +124,53 @@ router.get('/attendance-by-company', async (req, res) => {
 
         const orgs = await prisma.organization.findMany({
             where: { id: { in: orgIds } },
-            select: { id: true, organizationName: true, employeeCount: true }
+            select: { id: true, organizationName: true, employeeCount: true, organizationCode: true }
         });
 
-        const attendanceData = [];
+        const orgCodes = orgs.map(o => o.organizationCode).filter(Boolean);
 
-        for (const org of orgs) {
-            const total = org.employeeCount;
-
-            const presentCount = await prisma.attendance.count({
+        const [presentCountsData, leaveCountsData] = await Promise.all([
+            prisma.attendance.groupBy({
+                by: ['organizationCode'],
+                _count: true,
                 where: {
-                    employee: { organizationId: org.id },
+                    organizationCode: { in: orgCodes },
                     date: { gte: today, lte: endOfToday },
                     finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] }
                 }
-            });
-
-            const leaveCount = await prisma.leave.count({
+            }),
+            prisma.leave.groupBy({
+                by: ['organizationCode'],
+                _count: true,
                 where: {
-                    employee: { organizationId: org.id },
+                    organizationCode: { in: orgCodes },
                     status: 'Approved',
                     startDate: { lte: endOfToday },
                     endDate: { gte: today }
                 }
-            });
+            })
+        ]);
 
+        const presentMap = {};
+        presentCountsData.forEach(item => { presentMap[item.organizationCode] = item._count; });
+
+        const leaveMap = {};
+        leaveCountsData.forEach(item => { leaveMap[item.organizationCode] = item._count; });
+
+        const attendanceData = orgs.map(org => {
+            const total = org.employeeCount || 0;
+            const presentCount = presentMap[org.organizationCode] || 0;
+            const leaveCount = leaveMap[org.organizationCode] || 0;
             const absentCount = Math.max(0, total - presentCount - leaveCount);
 
-            attendanceData.push({
+            return {
                 name: org.organizationName,
                 total,
                 present: presentCount,
                 absent: absentCount,
                 onLeave: leaveCount
-            });
-        }
+            };
+        });
 
         // Sort by total employees descending
         attendanceData.sort((a, b) => b.total - a.total);
@@ -176,7 +191,7 @@ router.get('/department-distribution', async (req, res) => {
 
         const depts = await prisma.department.findMany({
             where: { organizationId: { in: orgIds } },
-            include: { employees: { where: { status: 'active' }, select: { id: true } } }
+            include: { _count: { select: { employees: { where: { status: 'active' } } } } }
         });
 
         // Group by department name (across companies, many companies might have "Engineering")
@@ -184,7 +199,7 @@ router.get('/department-distribution', async (req, res) => {
         let totalAssigned = 0;
 
         for (const d of depts) {
-            const count = d.employees.length;
+            const count = d._count.employees;
             if (count > 0) {
                 const name = d.name;
                 if (!deptMap[name]) deptMap[name] = 0;
@@ -236,7 +251,8 @@ router.get('/expense-trends', async (req, res) => {
                 organizationCode: { in: orgCodes },
                 status: { in: ['Approved', 'Paid'] },
                 createdAt: { gte: rangeStart, lte: rangeEnd }
-            }
+            },
+            select: { amount: true, createdAt: true, organizationCode: true }
         });
 
         // Build data structure
@@ -283,12 +299,19 @@ router.get('/leave-trends', async (req, res) => {
         const rangeStart = now.clone().subtract(5, 'months').startOf('month').toDate();
         const rangeEnd = now.clone().endOf('month').toDate();
 
+        const orgs = await prisma.organization.findMany({
+            where: { id: { in: orgIds } },
+            select: { organizationCode: true }
+        });
+        const orgCodes = orgs.map(o => o.organizationCode).filter(Boolean);
+
         const leaves = await prisma.leave.findMany({
             where: {
-                employee: { organizationId: { in: orgIds } },
+                organizationCode: { in: orgCodes },
                 status: 'Approved',
                 startDate: { gte: rangeStart, lte: rangeEnd }
-            }
+            },
+            select: { startDate: true, endDate: true }
         });
 
         const trends = [];
@@ -333,21 +356,21 @@ router.get('/approvals', async (req, res) => {
         const codeToName = {};
         orgCodesData.forEach(o => { codeToName[o.organizationCode] = o.organizationName; });
 
-        // Fetch pending leaves
-        const leaves = await prisma.leave.findMany({
-            where: { employee: { organizationId: { in: orgIds } }, status: 'Pending' },
-            include: { employee: { select: { employeeName: true, organizationId: true } } },
-            take: 5,
-            orderBy: { createdAt: 'desc' }
-        });
-
-        // Fetch pending expenses
-        const expenses = await prisma.expense.findMany({
-            where: { organizationCode: { in: orgCodes }, status: 'Pending' },
-            include: { employee: { select: { employeeName: true } } },
-            take: 5,
-            orderBy: { createdAt: 'desc' }
-        });
+        // Fetch pending leaves and expenses concurrently
+        const [leaves, expenses] = await Promise.all([
+            prisma.leave.findMany({
+                where: { employee: { organizationId: { in: orgIds } }, status: 'Pending' },
+                include: { employee: { select: { employeeName: true, organizationId: true } } },
+                take: 5,
+                orderBy: { createdAt: 'desc' }
+            }),
+            prisma.expense.findMany({
+                where: { organizationCode: { in: orgCodes }, status: 'Pending' },
+                include: { employee: { select: { employeeName: true } } },
+                take: 5,
+                orderBy: { createdAt: 'desc' }
+            })
+        ]);
 
         let approvals = [];
         
@@ -394,17 +417,44 @@ router.get('/alerts', async (req, res) => {
         const endOfToday = moment().tz('Asia/Kolkata').endOf('day').toDate();
         const orgs = await prisma.organization.findMany({
             where: { id: { in: orgIds } },
-            select: { id: true, organizationName: true, employeeCount: true }
+            select: { id: true, organizationName: true, employeeCount: true, organizationCode: true }
         });
+        const orgCodes = orgs.map(o => o.organizationCode).filter(Boolean);
+
+        const [presentCountsData, leaveCountsData, pendingLeavesCount] = await Promise.all([
+            prisma.attendance.groupBy({
+                by: ['organizationCode'],
+                _count: true,
+                where: {
+                    organizationCode: { in: orgCodes },
+                    date: { gte: today, lte: endOfToday },
+                    finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] }
+                }
+            }),
+            prisma.leave.groupBy({
+                by: ['organizationCode'],
+                _count: true,
+                where: {
+                    organizationCode: { in: orgCodes },
+                    status: 'Approved',
+                    startDate: { lte: endOfToday },
+                    endDate: { gte: today }
+                }
+            }),
+            prisma.leave.count({
+                where: { employee: { organizationId: { in: orgIds } }, status: 'Pending' }
+            })
+        ]);
+
+        const presentMap = {};
+        presentCountsData.forEach(item => { presentMap[item.organizationCode] = item._count; });
+        const leaveMap = {};
+        leaveCountsData.forEach(item => { leaveMap[item.organizationCode] = item._count; });
 
         for (const org of orgs) {
-            if (org.employeeCount > 0) {
-                const presentCount = await prisma.attendance.count({
-                    where: { employee: { organizationId: org.id }, date: { gte: today, lte: endOfToday }, finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] } }
-                });
-                const leaveCount = await prisma.leave.count({
-                    where: { employee: { organizationId: org.id }, status: 'Approved', startDate: { lte: endOfToday }, endDate: { gte: today } }
-                });
+            if (org.employeeCount > 0 && org.organizationCode) {
+                const presentCount = presentMap[org.organizationCode] || 0;
+                const leaveCount = leaveMap[org.organizationCode] || 0;
                 const absentCount = Math.max(0, org.employeeCount - presentCount - leaveCount);
                 const absentRate = (absentCount / org.employeeCount) * 100;
 
@@ -420,10 +470,6 @@ router.get('/alerts', async (req, res) => {
         }
 
         // 2. Pending approvals volume alert
-        const pendingLeavesCount = await prisma.leave.count({
-            where: { employee: { organizationId: { in: orgIds } }, status: 'Pending' }
-        });
-        
         if (pendingLeavesCount > 20) {
             alerts.push({
                 id: `alt-lvs`,
