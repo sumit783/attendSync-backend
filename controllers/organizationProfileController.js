@@ -111,17 +111,20 @@ exports.updateLocation = exports.setLocation;
 exports.updateTime = exports.setTime;
 
 exports.updateDetails = async (req, res) => {
-    const { organizationId, name, address, contactNumber, profilePic } = req.body;
+    const organizationId = req.organizationId || req.body.organizationId;
+    const { name, organizationName, address, contactNumber, organizationOwnerName, profilePic } = req.body;
+    const orgName = organizationName || name;
 
-    if (!organizationId || !name || !address || !contactNumber) {
-        return res.status(400).send({ message: 'All fields (organizationId, name, address, contactNumber) are required' });
+    if (!organizationId) {
+        return res.status(400).send({ message: 'organizationId is required' });
     }
 
     try {
-        const data = { name, address, contactNumber };
-        if (profilePic) {
-            data.organizationProfilePic = profilePic;
-        }
+        const data = {};
+        if (orgName) data.organizationName = orgName;
+        if (organizationOwnerName) data.organizationOwnerName = organizationOwnerName;
+        if (address !== undefined) data.address = address;
+        if (profilePic) data.organizationProfilePic = profilePic;
 
         const organization = await prisma.organization.update({
             where: { id: organizationId },
