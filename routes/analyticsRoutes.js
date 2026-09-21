@@ -74,7 +74,7 @@ router.get('/companies', authenticateAdmin, async (req, res) => {
         for (const a of attendances) {
             if (!attByEmp[a.employeeId]) attByEmp[a.employeeId] = { total: 0, present: 0 };
             attByEmp[a.employeeId].total += 1;
-            if (['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'].includes(a.finalRemark)) {
+            if (['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early'].includes(a.finalRemark)) {
                 attByEmp[a.employeeId].present += 1;
             }
         }
@@ -303,7 +303,7 @@ router.get('/comparison', authenticateAdmin, async (req, res) => {
         for (const a of attendances) {
             if (!attByEmp[a.employeeId]) attByEmp[a.employeeId] = { total: 0, present: 0 };
             attByEmp[a.employeeId].total += 1;
-            if (['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'].includes(a.finalRemark)) {
+            if (['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early'].includes(a.finalRemark)) {
                 attByEmp[a.employeeId].present += 1;
             }
         }

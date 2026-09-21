@@ -1694,9 +1694,26 @@ router.post('/employees/:employeeId/manual-attendance', authenticateAdmin, requi
         extraHours = parseFloat((totalHours - expectedHours).toFixed(2));
       }
       
+      const halfShiftHours = expectedHours > 0 ? (expectedHours / 2) : 4;
+
+      const firstSession = updatedSessions[0];
+      const isLate = firstSession?.clockInRemark === 'Late';
+      const isEarlyLogout = clockOutRemark === 'Left Early';
+
       let finalRemark = 'Present';
-      if (totalHours < 4) finalRemark = 'Half Day';
-      else if (clockOutRemark === 'Left Early') finalRemark = 'Left Early';
+      if (totalHours < halfShiftHours) {
+        finalRemark = 'Half Day';
+      } else if (isLate && isEarlyLogout) {
+        finalRemark = 'Late & Left Early';
+      } else if (isLate) {
+        finalRemark = 'Late';
+      } else if (isEarlyLogout) {
+        finalRemark = 'Left Early';
+      } else if (firstSession?.clockInRemark === 'Early Login') {
+        finalRemark = 'Early Login';
+      } else {
+        finalRemark = 'On Time';
+      }
 
       await prisma.attendance.update({
         where: { id: attendanceRecord.id },

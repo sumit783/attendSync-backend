@@ -114,8 +114,10 @@ cron.schedule('*/15 * * * *', async () => {
             extraHours = parseFloat((totalHours - expectedHours).toFixed(2));
         }
 
+        const halfShiftHours = expectedHours > 0 ? (expectedHours / 2) : 4;
+
         let finalRemark = 'Present';
-        if (totalHours < 4) finalRemark = 'Half Day';
+        if (totalHours < halfShiftHours) finalRemark = 'Half Day';
 
         await prisma.attendance.update({
           where: { id: session.attendance.id },
