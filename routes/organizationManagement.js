@@ -153,9 +153,10 @@ router.get('/employees', authenticateAdmin, requireOrganizationAccess, async (re
       profilePic: true,
       salary: true,
       status: true,
+      shift: { select: { id: true, name: true, startTime: true, endTime: true, weekOffs: true } },
       department: { select: { id: true, name: true } },
       customRole: { select: { id: true, name: true } },
-      designations: { select: { id: true, name: true } },
+      designations: { select: { id: true, name: true } }
     };
 
     const deriveStatus = (emp) => {
