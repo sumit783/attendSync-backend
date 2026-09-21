@@ -624,13 +624,7 @@ router.get("/export-attendance", async (req, res) => {
             'Week Off': emp.WeekoffTaken,
             'Holiday': emp.HolidayDays,
             'Present Days': emp.PresentDays,
-            'Total Days': emp.TotalDays,
-            'Email': emp.Email,
-            'Organization': emp.Organization,
-            'Department': emp.Department,
-            'Absent Days': emp.AbsentDays,
-            'Leave Days': emp.LeaveDays,
-            'Total Working Hours': formatHoursToHHMM(emp.TotalDecimalHours)
+            'Total Days': emp.TotalDays
         }));
 
         if (format === 'csv') {

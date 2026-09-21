@@ -1541,13 +1541,7 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
       'Week Off': emp.WeekoffTaken,
       'Holiday': emp.HolidayDays,
       'Present Days': emp.PresentDays,
-      'Total Days': emp.TotalDays,
-      'Email': emp.Email,
-      'Organization': emp.Organization,
-      'Department': emp.Department,
-      'Absent Days': emp.AbsentDays,
-      'Leave Days': emp.LeaveDays,
-      'Total Working Hours': formatHoursToHHMM(emp.TotalDecimalHours)
+      'Total Days': emp.TotalDays
     }));
 
     res.status(200).send({ exportData, summaryData });
