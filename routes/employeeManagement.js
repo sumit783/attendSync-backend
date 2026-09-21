@@ -708,7 +708,7 @@ router.get('/attendance/today', authenticateJWT, async (req, res) => {
 
         // Construct final response
         const formattedRecord = {
-            date: attendanceRecord.date.toISOString().split('T')[0], // YYYY-MM-DD format
+            date: moment(attendanceRecord.date).tz('Asia/Kolkata').format('YYYY-MM-DD'), // YYYY-MM-DD format
             clockInTime: firstSession?.clockInTime || 'Not clocked in',
             clockInRemark: firstSession?.clockInRemark || 'N/A',
             clockOutTime: lastSession?.clockOutTime || 'Not clocked out',

@@ -153,22 +153,29 @@ router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, a
 
         const existingFirstSession = attendance?.sessions?.[0] || null;
 
-        const parseTimeString = (timeStr) => {
+        const parseTimeString = (timeStr, specificDateStr = dateStr) => {
             if (!timeStr || typeof timeStr !== 'string') return null;
             const trimmed = timeStr.trim();
             if (!trimmed || trimmed === '-') return null;
             const is12Hour = trimmed.toUpperCase().includes('AM') || trimmed.toUpperCase().includes('PM');
             const format = is12Hour ? 'YYYY-MM-DD hh:mm A' : 'YYYY-MM-DD HH:mm';
-            const m = moment.tz(`${dateStr} ${trimmed}`, format, 'Asia/Kolkata');
+            const m = moment.tz(`${specificDateStr} ${trimmed}`, format, 'Asia/Kolkata');
             return m.isValid() ? m.toDate() : null;
         };
 
+        const checkInDateStr = request.requestedCheckInDate 
+            ? moment(request.requestedCheckInDate).tz('Asia/Kolkata').format('YYYY-MM-DD') 
+            : dateStr;
+        const checkOutDateStr = request.requestedCheckOutDate 
+            ? moment(request.requestedCheckOutDate).tz('Asia/Kolkata').format('YYYY-MM-DD') 
+            : dateStr;
+
         // Parse requested check-in time or retain existing
         let clockInDate = null;
-        if (request.requestedCheckInDate) {
+        if (request.requestedCheckIn) {
+            clockInDate = parseTimeString(request.requestedCheckIn, checkInDateStr);
+        } else if (request.requestedCheckInDate) {
             clockInDate = new Date(request.requestedCheckInDate);
-        } else if (request.requestedCheckIn) {
-            clockInDate = parseTimeString(request.requestedCheckIn);
         }
         if (!clockInDate && existingFirstSession?.clockInTime) {
             clockInDate = existingFirstSession.clockInTime;
@@ -176,10 +183,14 @@ router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, a
 
         // Parse requested check-out time or retain existing
         let clockOutDate = null;
-        if (request.requestedCheckOutDate) {
+        if (request.requestedCheckOut) {
+            clockOutDate = parseTimeString(request.requestedCheckOut, checkOutDateStr);
+            if (clockInDate && clockOutDate && clockOutDate < clockInDate && checkOutDateStr === checkInDateStr) {
+                // Night shift / overnight rollover
+                clockOutDate = moment(clockOutDate).add(1, 'days').toDate();
+            }
+        } else if (request.requestedCheckOutDate) {
             clockOutDate = new Date(request.requestedCheckOutDate);
-        } else if (request.requestedCheckOut) {
-            clockOutDate = parseTimeString(request.requestedCheckOut);
         }
         if (!clockOutDate && existingFirstSession?.clockOutTime) {
             clockOutDate = existingFirstSession.clockOutTime;

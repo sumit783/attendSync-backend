@@ -1227,7 +1227,7 @@ router.get('/employee-details/:employeeId', authenticateAdmin, requireOrganizati
     const calendar = {};
 
     attendanceRecords.forEach(record => {
-      const dateStr = record.date.toISOString().split('T')[0];
+      const dateStr = moment(record.date).tz('Asia/Kolkata').format('YYYY-MM-DD');
       const firstSession = record.sessions.length > 0 ? record.sessions[0] : null;
       const lastSession = record.sessions.length > 0 ? record.sessions[record.sessions.length - 1] : null;
       calendar[dateStr] = {
@@ -1239,10 +1239,10 @@ router.get('/employee-details/:employeeId', authenticateAdmin, requireOrganizati
     });
 
     approvedLeaveRecords.forEach(leaveRecord => {
-      const currentDate = new Date(leaveRecord.startDate);
-      const endDate = new Date(leaveRecord.endDate);
-      while (currentDate <= endDate) {
-        const dateString = currentDate.toISOString().split('T')[0];
+      const currentDate = moment(leaveRecord.startDate).tz('Asia/Kolkata').startOf('day');
+      const endDate = moment(leaveRecord.endDate).tz('Asia/Kolkata').startOf('day');
+      while (currentDate.isSameOrBefore(endDate)) {
+        const dateString = currentDate.format('YYYY-MM-DD');
         calendar[dateString] = {
           status: 'Leave',
           leaveType: leaveRecord.leaveType,
@@ -1250,7 +1250,7 @@ router.get('/employee-details/:employeeId', authenticateAdmin, requireOrganizati
           clockOutTime: null,
           totalHours: null,
         };
-        currentDate.setDate(currentDate.getDate() + 1);
+        currentDate.add(1, 'days');
       }
     });
 
