@@ -103,7 +103,7 @@ router.get('/employees', authenticateAdmin, requireOrganizationAccess, async (re
 
     const organization = await prisma.organization.findUnique({
       where: { id: req.organizationId },
-      select: { organizationCode: true }
+      select: { organizationCode: true, inTime: true }
     });
 
     if (!organization) {
@@ -111,17 +111,24 @@ router.get('/employees', authenticateAdmin, requireOrganizationAccess, async (re
     }
 
     const orgCode = organization.organizationCode;
+    const orgInTimeStr = organization.inTime || '09:00';
     const currentDate = new Date();
     currentDate.setHours(0, 0, 0, 0);
     const nextDate = new Date(currentDate);
     nextDate.setDate(nextDate.getDate() + 1);
-    const currentDayName = currentDate.toLocaleDateString('en-US', { weekday: 'long' });
 
     // Parallelise attendance + leave lookups (needed for stats + status derivation)
     const [attendances, approvedLeaves] = await Promise.all([
       prisma.attendance.findMany({
         where: { organizationCode: orgCode, date: { gte: currentDate, lt: nextDate } },
-        select: { employeeId: true }
+        select: {
+          employeeId: true,
+          sessions: {
+            select: { clockInTime: true },
+            orderBy: { clockInTime: 'asc' },
+            take: 1
+          }
+        }
       }),
       prisma.leave.findMany({
         where: {
@@ -134,7 +141,7 @@ router.get('/employees', authenticateAdmin, requireOrganizationAccess, async (re
       })
     ]);
 
-    const presentEmpIds = new Set(attendances.map(a => a.employeeId));
+    const attendanceByEmpId = new Map(attendances.map(a => [a.employeeId, a]));
     const onLeaveEmpIds = new Set(approvedLeaves.map(l => l.employeeId));
 
     // Base where clause — simplified: use organizationCode directly (no slow history OR)
@@ -159,47 +166,42 @@ router.get('/employees', authenticateAdmin, requireOrganizationAccess, async (re
       designations: { select: { id: true, name: true } }
     };
 
+    const isEmpLate = (emp) => {
+      const att = attendanceByEmpId.get(emp.id);
+      if (!att || !att.sessions || att.sessions.length === 0) return false;
+      const firstSession = att.sessions[0];
+      if (!firstSession.clockInTime) return false;
+
+      const clockInDate = new Date(firstSession.clockInTime);
+      const inTimeStr = emp.shift?.startTime || orgInTimeStr;
+      const [hours, minutes] = inTimeStr.split(':');
+      const expectedInTime = new Date(currentDate);
+      expectedInTime.setHours(parseInt(hours || '9'), parseInt(minutes || '0'), 0, 0);
+      return clockInDate > expectedInTime;
+    };
+
     const deriveStatus = (emp) => {
       if (emp.status === 'inactive') return 'Inactive';
       if (onLeaveEmpIds.has(emp.id)) return 'On Leave';
-      if (presentEmpIds.has(emp.id)) return 'Present';
+      if (attendanceByEmpId.has(emp.id)) {
+        if (isEmpLate(emp)) return 'Late';
+        return 'Present';
+      }
       return 'Absent';
     };
 
-    // === FAST PATH: No status filter — paginate at DB level ===
-    if (!status || status === 'All') {
-      const [allEmployees, total] = await Promise.all([
-        prisma.employee.findMany({
-          where: baseWhere,
-          select: employeeSelect,
-          skip,
-          take: limitNum,
-          orderBy: { employeeName: 'asc' }
-        }),
-        prisma.employee.count({ where: baseWhere })
-      ]);
-
-      // Compute stats (lightweight — counts only, no extra DB query)
-      const statCounts = { total, present: presentEmpIds.size, absent: 0, onleave: onLeaveEmpIds.size };
-      statCounts.absent = Math.max(0, total - statCounts.present - statCounts.onleave);
-
-      const employees = allEmployees.map(emp => ({ ...emp, status: deriveStatus(emp) }));
-
-      return res.status(200).send({
-        employees,
-        stats: statCounts,
-        pagination: { total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) }
-      });
-    }
-
-    // === STATUS FILTER PATH: Load IDs+status first, filter, then paginate ===
-    const allEmpIds = await prisma.employee.findMany({
+    // Load IDs + shift info for all employees matching search criteria
+    const allEmpInfo = await prisma.employee.findMany({
       where: baseWhere,
-      select: { id: true, status: true }
+      select: {
+        id: true,
+        status: true,
+        shift: { select: { startTime: true } }
+      }
     });
 
     // Compute derived status for each employee
-    const withStatus = allEmpIds.map(emp => ({
+    const withStatus = allEmpInfo.map(emp => ({
       id: emp.id,
       derivedStatus: deriveStatus(emp)
     }));
@@ -207,15 +209,23 @@ router.get('/employees', authenticateAdmin, requireOrganizationAccess, async (re
     // Stats across all employees
     const stats = {
       total: withStatus.length,
-      present: withStatus.filter(e => e.derivedStatus === 'Present').length,
+      present: withStatus.filter(e => e.derivedStatus === 'Present' || e.derivedStatus === 'Late').length,
+      late: withStatus.filter(e => e.derivedStatus === 'Late').length,
       absent: withStatus.filter(e => e.derivedStatus === 'Absent').length,
       onleave: withStatus.filter(e => e.derivedStatus === 'On Leave').length
     };
 
-    // Filter to matching status
-    const matchingIds = withStatus
-      .filter(e => e.derivedStatus.toLowerCase() === status.toLowerCase())
-      .map(e => e.id);
+    // Determine matching IDs based on filter
+    let matchingIds = withStatus.map(e => e.id);
+    if (status && status !== 'All') {
+      const targetStatus = status.toLowerCase();
+      matchingIds = withStatus
+        .filter(e => {
+          if (targetStatus === 'present') return e.derivedStatus === 'Present' || e.derivedStatus === 'Late';
+          return e.derivedStatus.toLowerCase() === targetStatus;
+        })
+        .map(e => e.id);
+    }
 
     const total = matchingIds.length;
     const pageIds = matchingIds.slice(skip, skip + limitNum);
@@ -229,13 +239,17 @@ router.get('/employees', authenticateAdmin, requireOrganizationAccess, async (re
     }
 
     // Fetch full data only for the current page IDs
-    const employees = await prisma.employee.findMany({
+    const pageEmployees = await prisma.employee.findMany({
       where: { id: { in: pageIds } },
       select: employeeSelect,
       orderBy: { employeeName: 'asc' }
     });
 
-    const enriched = employees.map(emp => ({ ...emp, status: deriveStatus(emp) }));
+    const enriched = pageEmployees.map(emp => ({
+      ...emp,
+      status: deriveStatus(emp),
+      isLate: isEmpLate(emp)
+    }));
 
     res.status(200).send({
       employees: enriched,

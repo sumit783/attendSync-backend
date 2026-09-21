@@ -16,12 +16,23 @@ const {
     updateWorkingDays
 } = require('../controllers/organizationProfileController');
 
-// Replaced local multer with Cloudinary storage
+const handleUpload = (req, res, next) => {
+    upload.any()(req, res, (err) => {
+        if (err) {
+            console.error('Multer upload error:', err);
+            return res.status(400).send({ message: err.message || 'File upload error' });
+        }
+        if (req.files && req.files.length > 0) {
+            req.file = req.files[0];
+        }
+        next();
+    });
+};
 
 /**
- * Upload or Update Organization Profile Picture
+ * Upload or Update Organization Profile Picture (Blob / Base64 format)
  */
-router.post('/upload-profile-pic', authenticateAdmin, requireOrganizationAccess, upload.single('organizationProfilePic'), uploadProfilePic);
+router.post('/upload-profile-pic', handleUpload, authenticateAdmin, requireOrganizationAccess, uploadProfilePic);
 
 /**
  * Set Organization Location and Radius

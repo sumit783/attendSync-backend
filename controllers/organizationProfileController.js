@@ -1,14 +1,19 @@
 const prisma = require('../prisma/client');
 
 exports.uploadProfilePic = async (req, res) => {
-    const organizationId = req.organizationId;
+    const organizationId = req.organizationId || req.body?.organizationId || req.query?.organizationId;
 
-    if (!req.file) {
-        return res.status(400).send({ message: 'Profile picture is required' });
+    if (!organizationId) {
+        return res.status(400).send({ message: 'Organization ID is required' });
+    }
+
+    const file = req.file || (req.files && req.files[0]);
+    if (!file || !file.buffer) {
+        return res.status(400).send({ message: 'Profile picture file is required' });
     }
 
     try {
-        const base64Image = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+        const base64Image = `data:${file.mimetype || 'image/png'};base64,${file.buffer.toString('base64')}`;
 
         const organization = await prisma.organization.update({
             where: { id: organizationId },
@@ -18,8 +23,11 @@ exports.uploadProfilePic = async (req, res) => {
         res.status(200).send({
             message: 'Profile picture uploaded successfully',
             profilePic: organization.organizationProfilePic,
+            organizationProfilePic: organization.organizationProfilePic,
+            organization
         });
     } catch (error) {
+        console.error('Error in uploadProfilePic:', error);
         if (error.code === 'P2025') {
             return res.status(404).send({ message: 'Organization not found' });
         }
