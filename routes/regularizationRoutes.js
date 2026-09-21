@@ -108,6 +108,8 @@ router.get('/admin', authenticateAdmin, requireOrganizationAccess, async (req, r
     }
 });
 
+const moment = require('moment-timezone');
+
 // ================== Admin: Approve Regularization Request ==================
 router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
     // #swagger.tags = ['Attendance and Employee Management']
@@ -134,37 +136,58 @@ router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, a
             }
         });
 
-        // Find existing attendance for this date
-        const startOfDay = new Date(request.attendanceDate);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(startOfDay);
-        endOfDay.setDate(endOfDay.getDate() + 1);
+        // Compute day range in Asia/Kolkata timezone
+        const dateStr = moment(request.attendanceDate).tz('Asia/Kolkata').format('YYYY-MM-DD');
+        const startOfDay = moment.tz(dateStr, 'YYYY-MM-DD', 'Asia/Kolkata').startOf('day').toDate();
+        const endOfDay = moment.tz(dateStr, 'YYYY-MM-DD', 'Asia/Kolkata').endOf('day').toDate();
 
         let attendance = await prisma.attendance.findFirst({
             where: {
                 employeeId: request.employeeId,
-                date: { gte: startOfDay, lt: endOfDay }
+                date: { gte: startOfDay, lte: endOfDay }
+            },
+            include: {
+                sessions: { orderBy: { clockInTime: 'asc' } }
             }
         });
 
-        // Parse requested check in/out. Use precise dates if provided, else fall back to IST time strings on the attendanceDate
-        let clockInDate = startOfDay;
+        const existingFirstSession = attendance?.sessions?.[0] || null;
+
+        const parseTimeString = (timeStr) => {
+            if (!timeStr || typeof timeStr !== 'string') return null;
+            const trimmed = timeStr.trim();
+            if (!trimmed || trimmed === '-') return null;
+            const is12Hour = trimmed.toUpperCase().includes('AM') || trimmed.toUpperCase().includes('PM');
+            const format = is12Hour ? 'YYYY-MM-DD hh:mm A' : 'YYYY-MM-DD HH:mm';
+            const m = moment.tz(`${dateStr} ${trimmed}`, format, 'Asia/Kolkata');
+            return m.isValid() ? m.toDate() : null;
+        };
+
+        // Parse requested check-in time or retain existing
+        let clockInDate = null;
         if (request.requestedCheckInDate) {
             clockInDate = new Date(request.requestedCheckInDate);
         } else if (request.requestedCheckIn) {
-            clockInDate = new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckIn}:00+05:30`);
+            clockInDate = parseTimeString(request.requestedCheckIn);
+        }
+        if (!clockInDate && existingFirstSession?.clockInTime) {
+            clockInDate = existingFirstSession.clockInTime;
         }
 
-        let clockOutDate = startOfDay;
+        // Parse requested check-out time or retain existing
+        let clockOutDate = null;
         if (request.requestedCheckOutDate) {
             clockOutDate = new Date(request.requestedCheckOutDate);
         } else if (request.requestedCheckOut) {
-            clockOutDate = new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckOut}:00+05:30`);
+            clockOutDate = parseTimeString(request.requestedCheckOut);
         }
-        
+        if (!clockOutDate && existingFirstSession?.clockOutTime) {
+            clockOutDate = existingFirstSession.clockOutTime;
+        }
+
         let duration = 0;
-        if ((request.requestedCheckInDate || request.requestedCheckIn) && (request.requestedCheckOutDate || request.requestedCheckOut)) {
-             duration = (clockOutDate.getTime() - clockInDate.getTime()) / (1000 * 60 * 60); // hours
+        if (clockInDate && clockOutDate) {
+            duration = Math.max(0, parseFloat(((clockOutDate.getTime() - clockInDate.getTime()) / (1000 * 60 * 60)).toFixed(2)));
         }
 
         if (attendance) {
@@ -178,14 +201,14 @@ router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, a
                     finalRemark: "Regularized"
                 }
             });
-            // Update or create a session
-            const firstSession = await prisma.session.findFirst({ where: { attendanceId: attendance.id }});
-            if (firstSession) {
+
+            // Update or create session
+            if (existingFirstSession) {
                 await prisma.session.update({
-                    where: { id: firstSession.id },
+                    where: { id: existingFirstSession.id },
                     data: {
-                        clockInTime: clockInDate,
-                        clockOutTime: clockOutDate,
+                        clockInTime: clockInDate || existingFirstSession.clockInTime,
+                        clockOutTime: clockOutDate || existingFirstSession.clockOutTime,
                         duration: duration
                     }
                 });
@@ -193,7 +216,7 @@ router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, a
                 await prisma.session.create({
                     data: {
                         attendanceId: attendance.id,
-                        clockInTime: clockInDate,
+                        clockInTime: clockInDate || startOfDay,
                         clockOutTime: clockOutDate,
                         duration: duration
                     }
@@ -214,7 +237,7 @@ router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, a
                     finalRemark: "Regularized",
                     sessions: {
                         create: {
-                            clockInTime: clockInDate,
+                            clockInTime: clockInDate || startOfDay,
                             clockOutTime: clockOutDate,
                             duration: duration
                         }
