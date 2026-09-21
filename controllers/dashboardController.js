@@ -169,29 +169,23 @@ exports.getExpenseDistribution = async (req, res) => {
 
     expenses.forEach(item => {
       const amt = Number(item.amount || 0);
-      totalExpenseAmount += amt;
-
-      const cat = item.type || 'General';
-      const catCurr = categoryMap.get(cat) || { amount: 0, count: 0 };
-      categoryMap.set(cat, { amount: catCurr.amount + amt, count: catCurr.count + 1 });
-
       const status = item.status || 'PENDING';
       if (expenseStats[status] !== undefined) expenseStats[status]++;
 
-      // Map DB enum status to Pascal case for frontend
+      // If expense claim is REJECTED, do not add it to totalExpenseAmount or active category claims
+      if (status !== 'REJECTED') {
+        totalExpenseAmount += amt;
+
+        const cat = item.type || 'General';
+        const catCurr = categoryMap.get(cat) || { amount: 0, count: 0 };
+        categoryMap.set(cat, { amount: catCurr.amount + amt, count: catCurr.count + 1 });
+      }
+
+      // Map DB enum status to Pascal case for status breakdown
       const statusPascal = status.charAt(0) + status.slice(1).toLowerCase();
       const statCurr = statusMap.get(statusPascal) || { amount: 0, count: 0 };
       statusMap.set(statusPascal, { amount: statCurr.amount + amt, count: statCurr.count + 1 });
     });
-
-    // Fallback if no items yet, matching frontend placeholder
-    if (totalExpenseAmount === 0 && expenses.length === 0) {
-      categoryMap.set('Travel & Commute', { amount: 45000, count: 6 });
-      categoryMap.set('Office Supplies', { amount: 28000, count: 4 });
-      categoryMap.set('Meals & Client', { amount: 18500, count: 3 });
-      categoryMap.set('Tech & Hardware', { amount: 34000, count: 2 });
-      totalExpenseAmount = 125500;
-    }
 
     const PALETTE_COLORS = ['#2563eb', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#6366f1', '#f97316'];
     const EXPENSE_STATUS_COLORS = { Approved: '#10b981', Pending: '#f59e0b', Paid: '#3b82f6', Rejected: '#ef4444', Other: '#94a3b8' };
