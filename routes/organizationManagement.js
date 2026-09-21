@@ -1334,8 +1334,7 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
     ]);
 
     const formatHoursToHHMM = (decimalHours) => {
-      if (!decimalHours) return '00:00';
-      const isNegative = decimalHours < 0;
+      if (!decimalHours || decimalHours <= 0) return '00:00';
       const absHours = Math.abs(decimalHours);
       const hours = Math.floor(absHours);
       const minutes = Math.round((absHours - hours) * 60);
@@ -1347,7 +1346,7 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
       }
       const formattedHours = adjustedHours < 10 ? `0${adjustedHours}` : adjustedHours;
       const formattedMins = adjustedMinutes < 10 ? `0${adjustedMinutes}` : adjustedMinutes;
-      return `${isNegative ? '-' : ''}${formattedHours}:${formattedMins}`;
+      return `${formattedHours}:${formattedMins}`;
     };
 
     const exportData = [];
@@ -1396,11 +1395,35 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
           employeeSummary[email].PresentDays += 1;
           const firstSession = attendance.sessions[0];
           const lastSession = attendance.sessions[attendance.sessions.length - 1];
-          loginTime = firstSession.clockInTime ? moment(firstSession.clockInTime).tz('Asia/Kolkata').format('hh:mm A') : 'N/A';
-          logoutTime = lastSession.clockOutTime ? moment(lastSession.clockOutTime).tz('Asia/Kolkata').format('hh:mm A') : 'N/A';
-          totalHours = attendance.totalHours || 0;
-          extraHours = attendance.extraHours || 0;
-          
+
+          // Format full date & time for Login and Logout
+          loginTime = firstSession.clockInTime ? moment(firstSession.clockInTime).tz('Asia/Kolkata').format('YYYY-MM-DD hh:mm A') : 'N/A';
+          logoutTime = lastSession.clockOutTime ? moment(lastSession.clockOutTime).tz('Asia/Kolkata').format('YYYY-MM-DD hh:mm A') : 'N/A';
+
+          // Robust calculation of total working hours across all sessions (handles cross-midnight accurately)
+          let calculatedSessionHours = 0;
+          attendance.sessions.forEach(sess => {
+            if (sess.duration && sess.duration > 0) {
+              calculatedSessionHours += sess.duration;
+            } else if (sess.clockInTime && sess.clockOutTime) {
+              const diffMs = new Date(sess.clockOutTime).getTime() - new Date(sess.clockInTime).getTime();
+              if (diffMs > 0) {
+                calculatedSessionHours += parseFloat((diffMs / (1000 * 60 * 60)).toFixed(2));
+              }
+            }
+          });
+
+          // Use attendance.totalHours if positive and matches session math, otherwise use calculatedSessionHours
+          if (attendance.totalHours && attendance.totalHours > 0 && Math.abs(attendance.totalHours - calculatedSessionHours) < 0.1) {
+            totalHours = attendance.totalHours;
+          } else {
+            totalHours = calculatedSessionHours;
+          }
+
+          // Ensure hours are never negative
+          totalHours = Math.max(0, totalHours);
+          extraHours = Math.max(0, attendance.extraHours || 0);
+
           employeeSummary[email].TotalDecimalHours += totalHours;
           employeeSummary[email].TotalExtraDecimalHours += extraHours;
 
@@ -1433,8 +1456,8 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
         } else if (attendance) {
           employeeSummary[email].PresentDays += 1;
           status = attendance.finalRemark || 'Present';
-          totalHours = attendance.totalHours || 0;
-          extraHours = attendance.extraHours || 0;
+          totalHours = Math.max(0, attendance.totalHours || 0);
+          extraHours = Math.max(0, attendance.extraHours || 0);
           employeeSummary[email].TotalDecimalHours += totalHours;
           employeeSummary[email].TotalExtraDecimalHours += extraHours;
         } else {
@@ -1460,8 +1483,8 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
           'Organization': organization.organizationName,
           'Department': emp.department?.name || 'Unassigned',
           'Date': currentDateStr,
-          'Login Time': loginTime,
-          'Logout Time': logoutTime,
+          'Login Date & Time': loginTime,
+          'Logout Date & Time': logoutTime,
           'Late Login': isLateLogin,
           'Early Logout': isEarlyLogout,
           'Total Hours (HH:MM)': formatHoursToHHMM(totalHours),
