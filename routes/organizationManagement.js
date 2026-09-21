@@ -1275,31 +1275,39 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
 
     const { startDate, endDate } = req.query;
     
-    const start = startDate ? moment(startDate).startOf('day') : moment().startOf('month');
-    const end = endDate ? moment(endDate).endOf('day') : moment().endOf('month');
-    const today = moment().endOf('day');
+    const start = startDate ? moment(startDate).tz('Asia/Kolkata').startOf('day') : moment().tz('Asia/Kolkata').startOf('month');
+    const end = endDate ? moment(endDate).tz('Asia/Kolkata').endOf('day') : moment().tz('Asia/Kolkata').endOf('month');
+    const today = moment().tz('Asia/Kolkata').endOf('day');
     const actualEnd = end.isAfter(today) ? today : end;
 
-    const [employees, attendances, approvedLeaves] = await Promise.all([
-      prisma.employee.findMany({
-        where: {
-          OR: [
-            { organizationCode: organization.organizationCode },
-            { history: { some: { organizationCode: organization.organizationCode } } }
-          ]
-        },
-        include: {
-          shift: true,
-          history: {
-            where: { organizationCode: organization.organizationCode },
-            orderBy: { leftAt: 'desc' },
-            take: 1
-          }
+    const employees = await prisma.employee.findMany({
+      where: {
+        OR: [
+          { organizationId: organization.id },
+          { organizationCode: organization.organizationCode },
+          { history: { some: { organizationCode: organization.organizationCode } } }
+        ]
+      },
+      include: {
+        shift: true,
+        department: { select: { name: true } },
+        history: {
+          where: { organizationCode: organization.organizationCode },
+          orderBy: { leftAt: 'desc' },
+          take: 1
         }
-      }),
+      }
+    });
+
+    const empIds = employees.map(e => e.id);
+
+    const [attendances, approvedLeaves] = await Promise.all([
       prisma.attendance.findMany({
         where: {
-          organizationCode: organization.organizationCode,
+          OR: [
+            { employeeId: { in: empIds } },
+            { organizationCode: organization.organizationCode }
+          ],
           date: { gte: start.toDate(), lte: actualEnd.toDate() }
         },
         include: {
@@ -1308,7 +1316,10 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
       }),
       prisma.leave.findMany({
         where: {
-          organizationCode: organization.organizationCode,
+          OR: [
+            { employeeId: { in: empIds } },
+            { organizationCode: organization.organizationCode }
+          ],
           status: 'Approved',
           startDate: { lte: actualEnd.toDate() },
           endDate: { gte: start.toDate() }
@@ -1324,7 +1335,7 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
       const minutes = Math.round((absHours - hours) * 60);
       let adjustedHours = hours;
       let adjustedMinutes = minutes;
-      if (minutes === 60) {
+      if (adjustedMinutes === 60) {
         adjustedHours += 1;
         adjustedMinutes = 0;
       }
@@ -1339,7 +1350,7 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
     const orgInTimeStr = organization.inTime || '09:00';
     const orgOutTimeStr = organization.outTime || '18:00';
 
-    for (let m = moment(start); m.isSameOrBefore(actualEnd); m.add(1, 'days')) {
+    for (let m = start.clone(); m.isSameOrBefore(actualEnd); m.add(1, 'days')) {
       const currentDayName = m.format('dddd');
       const currentDateStr = m.format('YYYY-MM-DD');
       
@@ -1349,6 +1360,8 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
           employeeSummary[email] = {
             EmployeeName: emp.employeeName,
             Email: email,
+            Organization: organization.organizationName,
+            Department: emp.department?.name || 'Unassigned',
             ExpectedWorkingDays: 0,
             PresentDays: 0,
             AbsentDays: 0,
@@ -1359,8 +1372,8 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
           };
         }
 
-        const attendance = attendances.find(a => a.employeeId === emp.id && moment(a.date).format('YYYY-MM-DD') === currentDateStr);
-        const isOnLeave = approvedLeaves.some(l => l.employeeId === emp.id && moment(l.startDate).startOf('day').isSameOrBefore(m) && moment(l.endDate).endOf('day').isSameOrAfter(m));
+        const attendance = attendances.find(a => a.employeeId === emp.id && moment(a.date).tz('Asia/Kolkata').format('YYYY-MM-DD') === currentDateStr);
+        const isOnLeave = approvedLeaves.some(l => l.employeeId === emp.id && moment(l.startDate).tz('Asia/Kolkata').startOf('day').isSameOrBefore(m) && moment(l.endDate).tz('Asia/Kolkata').endOf('day').isSameOrAfter(m));
         const isWeekOff = emp.shift && emp.shift.weekOffs && emp.shift.weekOffs.includes(currentDayName);
 
         let status = '';
@@ -1373,29 +1386,38 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
           employeeSummary[email].PresentDays += 1;
           const firstSession = attendance.sessions[0];
           const lastSession = attendance.sessions[attendance.sessions.length - 1];
-          loginTime = moment(firstSession.clockInTime).format('hh:mm A');
-          logoutTime = lastSession.clockOutTime ? moment(lastSession.clockOutTime).format('hh:mm A') : 'N/A';
+          loginTime = firstSession.clockInTime ? moment(firstSession.clockInTime).tz('Asia/Kolkata').format('hh:mm A') : 'N/A';
+          logoutTime = lastSession.clockOutTime ? moment(lastSession.clockOutTime).tz('Asia/Kolkata').format('hh:mm A') : 'N/A';
           totalHours = attendance.totalHours || 0;
           extraHours = attendance.extraHours || 0;
           
           employeeSummary[email].TotalDecimalHours += totalHours;
           employeeSummary[email].TotalExtraDecimalHours += extraHours;
 
-          let expectedInTime = moment(m);
-          let expectedOutTime = moment(m);
+          let expectedInTime = m.clone();
+          let expectedOutTime = m.clone();
           const inTimeParts = (emp.shift?.startTime || orgInTimeStr).split(':');
           const outTimeParts = (emp.shift?.endTime || orgOutTimeStr).split(':');
-          expectedInTime.set({ hour: parseInt(inTimeParts[0]), minute: parseInt(inTimeParts[1]), second: 0 });
-          expectedOutTime.set({ hour: parseInt(outTimeParts[0]), minute: parseInt(outTimeParts[1]), second: 0 });
+          expectedInTime.set({ hour: parseInt(inTimeParts[0] || '9'), minute: parseInt(inTimeParts[1] || '0'), second: 0 });
+          expectedOutTime.set({ hour: parseInt(outTimeParts[0] || '18'), minute: parseInt(outTimeParts[1] || '0'), second: 0 });
 
-          const isLate = moment(firstSession.clockInTime).isAfter(expectedInTime);
-          const isEarlyLeave = lastSession.clockOutTime && moment(lastSession.clockOutTime).isBefore(expectedOutTime);
+          const isLate = firstSession.clockInTime && moment(firstSession.clockInTime).tz('Asia/Kolkata').isAfter(expectedInTime);
+          const isEarlyLeave = lastSession.clockOutTime && moment(lastSession.clockOutTime).tz('Asia/Kolkata').isBefore(expectedOutTime);
 
-          if (isLate && isEarlyLeave) status = 'Late Login & Early Leave';
+          if (attendance.finalRemark && ['Half Day', 'Regularized'].includes(attendance.finalRemark)) {
+            status = attendance.finalRemark;
+          } else if (isLate && isEarlyLeave) status = 'Late Login & Early Leave';
           else if (isLate) status = 'Late Login';
           else if (isEarlyLeave) status = 'Early Leave';
           else status = 'On Time';
 
+        } else if (attendance) {
+          employeeSummary[email].PresentDays += 1;
+          status = attendance.finalRemark || 'Present';
+          totalHours = attendance.totalHours || 0;
+          extraHours = attendance.extraHours || 0;
+          employeeSummary[email].TotalDecimalHours += totalHours;
+          employeeSummary[email].TotalExtraDecimalHours += extraHours;
         } else {
           if (isOnLeave) {
             status = 'On Leave';
@@ -1416,6 +1438,8 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
         exportData.push({
           EmployeeName: emp.employeeName,
           Email: email,
+          Organization: organization.organizationName,
+          Department: emp.department?.name || 'Unassigned',
           Date: currentDateStr,
           LoginTime: loginTime,
           LogoutTime: logoutTime,
@@ -1430,6 +1454,9 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
 
     const summaryData = Object.values(employeeSummary).map(emp => ({
       'Employee Name': emp.EmployeeName,
+      'Email': emp.Email,
+      'Organization': emp.Organization,
+      'Department': emp.Department,
       'Expected Working Days': emp.ExpectedWorkingDays,
       'Present Days': emp.PresentDays,
       'Absent Days': emp.AbsentDays,
@@ -1445,55 +1472,7 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
     res.status(500).send({ message: 'Server error', error: error.message });
   }
 });
-// ================== Manual Attendance ==================
-/**
- * @swagger
- * /api/organization/employees/{employeeId}/manual-attendance:
- *   post:
- *     summary: Manually mark attendance for an employee (Admin)
- *     tags: [All Company]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - in: path
- *         name: employeeId
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - inDate
- *               - inTime
- *             properties:
- *               inDate:
- *                 type: string
- *                 example: "2026-09-18"
- *                 description: Date in YYYY-MM-DD format
- *               inTime:
- *                 type: string
- *                 example: "09:00 AM"
- *                 description: Time in HH:mm or HH:mm A format
- *               outDate:
- *                 type: string
- *                 example: "2026-09-19"
- *                 description: (Optional) Date in YYYY-MM-DD format
- *               outTime:
- *                 type: string
- *                 example: "01:00 AM"
- *                 description: (Optional) Time in HH:mm or HH:mm A format
- *     responses:
- *       200:
- *         description: Attendance marked successfully
- *       400:
- *         description: Invalid input
- *       404:
- *         description: Employee or organization not found
- */
+
 router.post('/employees/:employeeId/manual-attendance', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
     // #swagger.tags = ['All Company']
 

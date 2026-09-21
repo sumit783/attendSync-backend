@@ -261,6 +261,9 @@ router.get("/late-early", async (req, res) => {
             where: {
                 employee: { organizationId: { in: targetOrgIds } },
                 date: { gte: start, lte: end }
+            },
+            include: {
+                sessions: { orderBy: { clockInTime: 'asc' } }
             }
         });
 
@@ -269,8 +272,12 @@ router.get("/late-early", async (req, res) => {
         attendances.forEach(a => {
             const dayStr = moment(a.date).tz("Asia/Kolkata").format("ddd");
             if (dayMap[dayStr]) {
-                if (a.isLate) dayMap[dayStr].late += 1;
-                if (a.isEarlyOut) dayMap[dayStr].early += 1;
+                const isLate = (a.finalRemark && a.finalRemark.toLowerCase().includes('late')) ||
+                               (a.sessions && a.sessions.some(s => s.clockInRemark && s.clockInRemark.toLowerCase().includes('late')));
+                const isEarly = (a.finalRemark && (a.finalRemark.toLowerCase().includes('early') || a.finalRemark.toLowerCase().includes('left early'))) ||
+                                (a.sessions && a.sessions.some(s => s.clockOutRemark && s.clockOutRemark.toLowerCase().includes('early')));
+                if (isLate) dayMap[dayStr].late += 1;
+                if (isEarly) dayMap[dayStr].early += 1;
             }
         });
 
@@ -329,102 +336,250 @@ router.get("/leave-summary", async (req, res) => {
     }
 });
 
-// 6. Export Attendance CSV
+const formatHoursToHHMM = (decimalHours) => {
+    if (!decimalHours) return '00:00';
+    const isNegative = decimalHours < 0;
+    const absHours = Math.abs(decimalHours);
+    const hours = Math.floor(absHours);
+    const minutes = Math.round((absHours - hours) * 60);
+    let adjustedHours = hours;
+    let adjustedMinutes = minutes;
+    if (adjustedMinutes === 60) {
+        adjustedHours += 1;
+        adjustedMinutes = 0;
+    }
+    const formattedHours = adjustedHours < 10 ? `0${adjustedHours}` : adjustedHours;
+    const formattedMins = adjustedMinutes < 10 ? `0${adjustedMinutes}` : adjustedMinutes;
+    return `${isNegative ? '-' : ''}${formattedHours}:${formattedMins}`;
+};
+
+// 6. Export Attendance
 router.get("/export-attendance", async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, format } = req.query;
         const targetOrgIds = await getTargetOrgs(req);
 
         const start = startDate
-            ? moment(startDate).tz("Asia/Kolkata").startOf("day").toDate()
-            : moment().tz("Asia/Kolkata").startOf("month").toDate();
+            ? moment(startDate).tz("Asia/Kolkata").startOf("day")
+            : moment().tz("Asia/Kolkata").startOf("month");
         const end = endDate
-            ? moment(endDate).tz("Asia/Kolkata").endOf("day").toDate()
-            : moment().tz("Asia/Kolkata").endOf("month").toDate();
+            ? moment(endDate).tz("Asia/Kolkata").endOf("day")
+            : moment().tz("Asia/Kolkata").endOf("month");
+        const today = moment().tz("Asia/Kolkata").endOf("day");
+        const actualEnd = end.isAfter(today) ? today : end;
 
-        const attendances = await prisma.attendance.findMany({
-            where: {
-                employee: { organizationId: { in: targetOrgIds } },
-                date: { gte: start, lte: end }
-            },
-            include: {
-                employee: {
-                    select: {
-                        employeeName: true,
-                        employeeEmail: true,
-                        organizationCode: true,
-                        organization: { select: { organizationName: true } },
-                        department: { select: { name: true } }
+        const [employees, attendances, approvedLeaves, orgs] = await Promise.all([
+            prisma.employee.findMany({
+                where: {
+                    organizationId: { in: targetOrgIds }
+                },
+                include: {
+                    shift: true,
+                    organization: { select: { id: true, organizationName: true, inTime: true, outTime: true } },
+                    department: { select: { name: true } }
+                }
+            }),
+            prisma.attendance.findMany({
+                where: {
+                    employee: { organizationId: { in: targetOrgIds } },
+                    date: { gte: start.toDate(), lte: actualEnd.toDate() }
+                },
+                include: {
+                    sessions: { orderBy: { clockInTime: 'asc' } },
+                    employee: {
+                        select: {
+                            employeeName: true,
+                            employeeEmail: true,
+                            organization: { select: { organizationName: true } },
+                            department: { select: { name: true } }
+                        }
+                    }
+                },
+                orderBy: { date: 'asc' }
+            }),
+            prisma.leave.findMany({
+                where: {
+                    employee: { organizationId: { in: targetOrgIds } },
+                    status: 'Approved',
+                    startDate: { lte: actualEnd.toDate() },
+                    endDate: { gte: start.toDate() }
+                }
+            }),
+            prisma.organization.findMany({
+                where: { id: { in: targetOrgIds } },
+                select: { id: true, organizationName: true, inTime: true, outTime: true }
+            })
+        ]);
+
+        const orgMap = {};
+        orgs.forEach(o => { orgMap[o.id] = o; });
+
+        const exportData = [];
+        const employeeSummary = {};
+
+        for (let m = start.clone(); m.isSameOrBefore(actualEnd); m.add(1, 'days')) {
+            const currentDayName = m.format('dddd');
+            const currentDateStr = m.format('YYYY-MM-DD');
+
+            employees.forEach(emp => {
+                const email = emp.employeeEmail || 'unknown';
+                const orgInfo = orgMap[emp.organizationId] || emp.organization || {};
+                const orgInTimeStr = orgInfo.inTime || '09:00';
+                const orgOutTimeStr = orgInfo.outTime || '18:00';
+
+                if (!employeeSummary[email]) {
+                    employeeSummary[email] = {
+                        EmployeeName: emp.employeeName,
+                        Email: email,
+                        Organization: orgInfo.organizationName || 'N/A',
+                        Department: emp.department?.name || 'Unassigned',
+                        ExpectedWorkingDays: 0,
+                        PresentDays: 0,
+                        AbsentDays: 0,
+                        LeaveDays: 0,
+                        WeekoffTaken: 0,
+                        TotalDecimalHours: 0,
+                        TotalExtraDecimalHours: 0
+                    };
+                }
+
+                const attendance = attendances.find(a => 
+                    a.employeeId === emp.id && 
+                    moment(a.date).tz("Asia/Kolkata").format('YYYY-MM-DD') === currentDateStr
+                );
+                const isOnLeave = approvedLeaves.some(l => 
+                    l.employeeId === emp.id && 
+                    moment(l.startDate).tz("Asia/Kolkata").startOf('day').isSameOrBefore(m) && 
+                    moment(l.endDate).tz("Asia/Kolkata").endOf('day').isSameOrAfter(m)
+                );
+                const isWeekOff = emp.shift?.weekOffs?.includes(currentDayName);
+
+                let status = '';
+                let loginTime = 'N/A';
+                let logoutTime = 'N/A';
+                let totalHours = 0;
+                let extraHours = 0;
+
+                if (attendance && attendance.sessions && attendance.sessions.length > 0) {
+                    employeeSummary[email].PresentDays += 1;
+                    const firstSession = attendance.sessions[0];
+                    const lastSession = attendance.sessions[attendance.sessions.length - 1];
+
+                    loginTime = firstSession.clockInTime 
+                        ? moment(firstSession.clockInTime).tz('Asia/Kolkata').format('hh:mm A') 
+                        : 'N/A';
+                    logoutTime = lastSession.clockOutTime 
+                        ? moment(lastSession.clockOutTime).tz('Asia/Kolkata').format('hh:mm A') 
+                        : 'N/A';
+                    totalHours = attendance.totalHours || 0;
+                    extraHours = attendance.extraHours || 0;
+
+                    employeeSummary[email].TotalDecimalHours += totalHours;
+                    employeeSummary[email].TotalExtraDecimalHours += extraHours;
+
+                    let expectedInTime = m.clone();
+                    let expectedOutTime = m.clone();
+                    const inTimeParts = (emp.shift?.startTime || orgInTimeStr).split(':');
+                    const outTimeParts = (emp.shift?.endTime || orgOutTimeStr).split(':');
+                    expectedInTime.set({ hour: parseInt(inTimeParts[0] || '9'), minute: parseInt(inTimeParts[1] || '0'), second: 0 });
+                    expectedOutTime.set({ hour: parseInt(outTimeParts[0] || '18'), minute: parseInt(outTimeParts[1] || '0'), second: 0 });
+
+                    const isLate = firstSession.clockInTime && moment(firstSession.clockInTime).tz('Asia/Kolkata').isAfter(expectedInTime);
+                    const isEarlyLeave = lastSession.clockOutTime && moment(lastSession.clockOutTime).tz('Asia/Kolkata').isBefore(expectedOutTime);
+
+                    if (attendance.finalRemark && ['Half Day', 'Regularized'].includes(attendance.finalRemark)) {
+                        status = attendance.finalRemark;
+                    } else if (isLate && isEarlyLeave) {
+                        status = 'Late Login & Early Leave';
+                    } else if (isLate) {
+                        status = 'Late Login';
+                    } else if (isEarlyLeave) {
+                        status = 'Early Leave';
+                    } else {
+                        status = 'On Time';
+                    }
+                } else if (attendance) {
+                    employeeSummary[email].PresentDays += 1;
+                    status = attendance.finalRemark || 'Present';
+                    totalHours = attendance.totalHours || 0;
+                    extraHours = attendance.extraHours || 0;
+                    employeeSummary[email].TotalDecimalHours += totalHours;
+                    employeeSummary[email].TotalExtraDecimalHours += extraHours;
+                } else {
+                    if (isOnLeave) {
+                        status = 'On Leave';
+                        employeeSummary[email].LeaveDays += 1;
+                    } else if (isWeekOff) {
+                        status = 'Week Off';
+                        employeeSummary[email].WeekoffTaken += 1;
+                    } else {
+                        status = 'Absent';
+                        employeeSummary[email].AbsentDays += 1;
                     }
                 }
-            },
-            orderBy: { date: 'asc' }
-        });
 
-        // Build CSV
-        const headers = [
-            'Employee Name',
-            'Email',
-            'Org Code',
-            'Organization',
-            'Department',
-            'Date',
-            'Clock In',
-            'Clock Out',
-            'Status',
-            'Is Late',
-            'Early Out',
-            'Work Hours'
-        ];
+                if (!isWeekOff) {
+                    employeeSummary[email].ExpectedWorkingDays += 1;
+                }
 
-        const rows = attendances.map(a => {
-            const emp = a.employee;
-            const dateStr = moment(a.date).tz("Asia/Kolkata").format("DD-MM-YYYY");
-            const clockIn = a.clockIn
-                ? moment(a.clockIn).tz("Asia/Kolkata").format("HH:mm:ss")
-                : '';
-            const clockOut = a.clockOut
-                ? moment(a.clockOut).tz("Asia/Kolkata").format("HH:mm:ss")
-                : '';
+                exportData.push({
+                    EmployeeName: emp.employeeName,
+                    Email: email,
+                    Organization: orgInfo.organizationName || 'N/A',
+                    Department: emp.department?.name || 'Unassigned',
+                    Date: currentDateStr,
+                    LoginTime: loginTime,
+                    LogoutTime: logoutTime,
+                    TotalHours: formatHoursToHHMM(totalHours),
+                    ExtraHours: formatHoursToHHMM(extraHours),
+                    Status: status
+                });
+            });
+        }
 
-            // Compute work hours
-            let workHours = '';
-            if (a.clockIn && a.clockOut) {
-                const mins = moment(a.clockOut).diff(moment(a.clockIn), 'minutes');
-                const h = Math.floor(Math.abs(mins) / 60);
-                const m = Math.abs(mins) % 60;
-                workHours = `${h}h ${m}m`;
-            }
+        exportData.sort((a, b) => new Date(b.Date) - new Date(a.Date));
 
-            return [
-                `"${emp?.employeeName || ''}"`,
-                `"${emp?.employeeEmail || ''}"`,
-                `"${emp?.organizationCode || ''}"`,
-                `"${emp?.organization?.organizationName || ''}"`,
-                `"${emp?.department?.name || 'Unassigned'}"`,
-                `"${dateStr}"`,
-                `"${clockIn}"`,
-                `"${clockOut}"`,
-                `"${a.finalRemark || a.remark || ''}"`,
-                `"${a.isLate ? 'Yes' : 'No'}"`,
-                `"${a.isEarlyOut ? 'Yes' : 'No'}"`,
-                `"${workHours}"`
-            ].join(',');
-        });
+        const summaryData = Object.values(employeeSummary).map(emp => ({
+            'Employee Name': emp.EmployeeName,
+            'Email': emp.Email,
+            'Organization': emp.Organization,
+            'Department': emp.Department,
+            'Expected Working Days': emp.ExpectedWorkingDays,
+            'Present Days': emp.PresentDays,
+            'Absent Days': emp.AbsentDays,
+            'Leave Days': emp.LeaveDays,
+            'Weekoff Taken': emp.WeekoffTaken,
+            'Total Working Hours': formatHoursToHHMM(emp.TotalDecimalHours),
+            'Extra Working Hours': formatHoursToHHMM(emp.TotalExtraDecimalHours)
+        }));
 
-        const csv = [headers.join(','), ...rows].join('\n');
+        if (format === 'csv') {
+            const headers = ['Employee Name', 'Email', 'Organization', 'Department', 'Date', 'Clock In', 'Clock Out', 'Total Hours', 'Extra Hours', 'Status'];
+            const rows = exportData.map(d => [
+                `"${d.EmployeeName}"`,
+                `"${d.Email}"`,
+                `"${d.Organization}"`,
+                `"${d.Department}"`,
+                `"${d.Date}"`,
+                `"${d.LoginTime}"`,
+                `"${d.LogoutTime}"`,
+                `"${d.TotalHours}"`,
+                `"${d.ExtraHours}"`,
+                `"${d.Status}"`
+            ].join(','));
+            const csv = [headers.join(','), ...rows].join('\n');
+            const fromStr = start.format("DDMMYYYY");
+            const toStr = actualEnd.format("DDMMYYYY");
+            res.setHeader('Content-Type', 'text/csv');
+            res.setHeader('Content-Disposition', `attachment; filename="attendance_${fromStr}_${toStr}.csv"`);
+            return res.status(200).send(csv);
+        }
 
-        const fromStr = moment(start).format("DDMMYYYY");
-        const toStr = moment(end).format("DDMMYYYY");
-
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment; filename="attendance_${fromStr}_${toStr}.csv"`);
-        res.status(200).send(csv);
+        res.status(200).json({ exportData, summaryData });
     } catch (error) {
-        console.error(error);
-        res.status(500).send({ message: "Internal Server Error" });
+        console.error('Error in /reports/export-attendance:', error);
+        res.status(500).send({ message: "Internal Server Error", error: error.message });
     }
 });
 
 module.exports = router;
-

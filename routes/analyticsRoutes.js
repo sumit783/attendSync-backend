@@ -532,8 +532,8 @@ router.get('/waterfall', authenticateAdmin, async (req, res) => {
 // Returns per-company attendance, employee, and payroll data for Excel export
 router.get('/export-analytics', authenticateAdmin, async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
-        const orgIds = await getOrgIdsToQuery(req.adminId, 'all');
+        const { startDate, endDate, companyId } = req.query;
+        const orgIds = await getOrgIdsToQuery(req.adminId, companyId || 'all');
 
         const start = startDate
             ? moment(startDate).tz('Asia/Kolkata').startOf('day').toDate()
@@ -549,6 +549,7 @@ router.get('/export-analytics', authenticateAdmin, async (req, res) => {
                 date: { gte: start, lte: end }
             },
             include: {
+                sessions: { orderBy: { clockInTime: 'asc' } },
                 employee: {
                     select: {
                         id: true,
@@ -582,25 +583,43 @@ router.get('/export-analytics', authenticateAdmin, async (req, res) => {
             const emp = a.employee;
             if (!emp || !result[emp.organizationId]) continue;
 
-            const clockIn = a.clockIn ? moment(a.clockIn).tz('Asia/Kolkata').format('HH:mm:ss') : '';
-            const clockOut = a.clockOut ? moment(a.clockOut).tz('Asia/Kolkata').format('HH:mm:ss') : '';
-            let workHours = '';
-            if (a.clockIn && a.clockOut) {
-                const mins = Math.abs(moment(a.clockOut).diff(moment(a.clockIn), 'minutes'));
-                workHours = `${Math.floor(mins / 60)}h ${mins % 60}m`;
+            let clockIn = '';
+            let clockOut = '';
+            if (a.sessions && a.sessions.length > 0) {
+                const firstSession = a.sessions[0];
+                const lastSession = a.sessions[a.sessions.length - 1];
+                clockIn = firstSession.clockInTime
+                    ? moment(firstSession.clockInTime).tz('Asia/Kolkata').format('hh:mm A')
+                    : '';
+                clockOut = lastSession.clockOutTime
+                    ? moment(lastSession.clockOutTime).tz('Asia/Kolkata').format('hh:mm A')
+                    : '';
             }
+
+            const totalDecimalHours = a.totalHours || 0;
+            const hours = Math.floor(totalDecimalHours);
+            const mins = Math.round((totalDecimalHours - hours) * 60);
+            const workHours = totalDecimalHours > 0 ? `${hours}h ${mins}m` : (clockIn ? 'In Progress' : '0h 0m');
+
+            const isLate = (a.finalRemark && a.finalRemark.toLowerCase().includes('late')) ||
+                           (a.sessions && a.sessions.some(s => s.clockInRemark && s.clockInRemark.toLowerCase().includes('late')));
+            const isEarlyOut = (a.finalRemark && (a.finalRemark.toLowerCase().includes('early') || a.finalRemark.toLowerCase().includes('left early'))) ||
+                               (a.sessions && a.sessions.some(s => s.clockOutRemark && s.clockOutRemark.toLowerCase().includes('early')));
 
             result[emp.organizationId].rows.push({
                 'Employee Name': emp.employeeName || '',
                 'Email': emp.employeeEmail || '',
                 'Department': emp.department?.name || 'Unassigned',
                 'Date': moment(a.date).tz('Asia/Kolkata').format('DD-MM-YYYY'),
-                'Clock In': clockIn,
-                'Clock Out': clockOut,
-                'Status': a.finalRemark || a.remark || '',
-                'Is Late': a.isLate ? 'Yes' : 'No',
-                'Early Out': a.isEarlyOut ? 'Yes' : 'No',
+                'Clock In': clockIn || 'N/A',
+                'Clock Out': clockOut || 'N/A',
+                'Clock In (Login)': clockIn || 'N/A',
+                'Clock Out (Logout)': clockOut || 'N/A',
+                'Status': a.finalRemark || 'Present',
+                'Is Late': isLate ? 'Yes' : 'No',
+                'Early Out': isEarlyOut ? 'Yes' : 'No',
                 'Work Hours': workHours,
+                'Total Working Hours': workHours,
                 'Salary (₹)': emp.salary || 0
             });
         }
