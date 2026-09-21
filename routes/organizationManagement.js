@@ -1422,17 +1422,37 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
 
           // Ensure hours are never negative
           totalHours = Math.max(0, totalHours);
-          extraHours = Math.max(0, attendance.extraHours || 0);
+          // Helper to parse time strings in either "09:00", "9:00 AM", "09:00 PM", "21:00"
+          const parseTimeStringToMoment = (dateMom, timeStr, defaultH, defaultM) => {
+            if (!timeStr) return dateMom.clone().set({ hour: defaultH, minute: defaultM, second: 0 });
+            const trimmed = String(timeStr).trim();
+            if (trimmed.includes('AM') || trimmed.includes('PM')) {
+              return moment.tz(`${dateMom.format('YYYY-MM-DD')} ${trimmed}`, 'YYYY-MM-DD hh:mm A', 'Asia/Kolkata');
+            }
+            const parts = trimmed.split(':').map(Number);
+            return dateMom.clone().set({ hour: parts[0] || defaultH, minute: parts[1] || defaultM, second: 0 });
+          };
+
+          const expectedInTime = parseTimeStringToMoment(m, emp.shift?.startTime || orgInTimeStr, 9, 0);
+          let expectedOutTime = parseTimeStringToMoment(m, emp.shift?.endTime || orgOutTimeStr, 18, 0);
+          if (expectedOutTime.isBefore(expectedInTime)) {
+            expectedOutTime.add(1, 'day');
+          }
+
+          const expectedShiftHours = Math.max(0, expectedOutTime.diff(expectedInTime, 'hours', true));
+
+          // Extra hours calculation: ONLY overtime beyond the scheduled shift working hours
+          // Example: 9 AM to 9 PM shift (12 hrs expected) -> 10 AM to 10 PM worked (12 hrs total) -> extraHours = 0
+          if (expectedShiftHours > 0 && totalHours > expectedShiftHours) {
+            extraHours = parseFloat((totalHours - expectedShiftHours).toFixed(2));
+          } else {
+            extraHours = 0;
+          }
+
+          extraHours = Math.max(0, Math.min(totalHours, extraHours));
 
           employeeSummary[email].TotalDecimalHours += totalHours;
           employeeSummary[email].TotalExtraDecimalHours += extraHours;
-
-          let expectedInTime = m.clone();
-          let expectedOutTime = m.clone();
-          const inTimeParts = (emp.shift?.startTime || orgInTimeStr).split(':');
-          const outTimeParts = (emp.shift?.endTime || orgOutTimeStr).split(':');
-          expectedInTime.set({ hour: parseInt(inTimeParts[0] || '9'), minute: parseInt(inTimeParts[1] || '0'), second: 0 });
-          expectedOutTime.set({ hour: parseInt(outTimeParts[0] || '18'), minute: parseInt(outTimeParts[1] || '0'), second: 0 });
 
           const isLate = firstSession.clockInTime && moment(firstSession.clockInTime).tz('Asia/Kolkata').isAfter(expectedInTime);
           const isEarlyLeave = lastSession.clockOutTime && moment(lastSession.clockOutTime).tz('Asia/Kolkata').isBefore(expectedOutTime);
@@ -1457,7 +1477,7 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
           employeeSummary[email].PresentDays += 1;
           status = attendance.finalRemark || 'Present';
           totalHours = Math.max(0, attendance.totalHours || 0);
-          extraHours = Math.max(0, attendance.extraHours || 0);
+          extraHours = Math.max(0, Math.min(totalHours, attendance.extraHours || 0));
           employeeSummary[email].TotalDecimalHours += totalHours;
           employeeSummary[email].TotalExtraDecimalHours += extraHours;
         } else {
