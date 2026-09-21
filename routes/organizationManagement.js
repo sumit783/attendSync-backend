@@ -1307,7 +1307,7 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
 
     const empIds = employees.map(e => e.id);
 
-    const [attendances, approvedLeaves] = await Promise.all([
+    const [attendances, approvedLeaves, holidays] = await Promise.all([
       prisma.attendance.findMany({
         where: {
           OR: [
@@ -1327,6 +1327,13 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
             { organizationCode: organization.organizationCode }
           ],
           status: 'Approved',
+          startDate: { lte: actualEnd.toDate() },
+          endDate: { gte: start.toDate() }
+        }
+      }),
+      prisma.holiday.findMany({
+        where: {
+          organizationId: organization.id,
           startDate: { lte: actualEnd.toDate() },
           endDate: { gte: start.toDate() }
         }
@@ -1372,8 +1379,10 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
             AbsentDays: 0,
             LeaveDays: 0,
             WeekoffTaken: 0,
+            HolidayDays: 0,
             LateLogins: 0,
             EarlyLogouts: 0,
+            TotalDays: 0,
             TotalDecimalHours: 0,
             TotalExtraDecimalHours: 0
           };
@@ -1381,6 +1390,7 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
 
         const attendance = attendances.find(a => a.employeeId === emp.id && moment(a.date).tz('Asia/Kolkata').format('YYYY-MM-DD') === currentDateStr);
         const isOnLeave = approvedLeaves.some(l => l.employeeId === emp.id && moment(l.startDate).tz('Asia/Kolkata').startOf('day').isSameOrBefore(m) && moment(l.endDate).tz('Asia/Kolkata').endOf('day').isSameOrAfter(m));
+        const isHoliday = holidays.some(h => moment(h.startDate).tz('Asia/Kolkata').startOf('day').isSameOrBefore(m) && moment(h.endDate).tz('Asia/Kolkata').endOf('day').isSameOrAfter(m));
         const isWeekOff = emp.shift && emp.shift.weekOffs && emp.shift.weekOffs.includes(currentDayName);
 
         let status = '';
@@ -1390,6 +1400,8 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
         let isEarlyLogout = 'No';
         let totalHours = 0;
         let extraHours = 0;
+
+        employeeSummary[email].TotalDays += 1;
 
         if (attendance && attendance.sessions && attendance.sessions.length > 0) {
           employeeSummary[email].PresentDays += 1;
@@ -1484,6 +1496,9 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
           if (isOnLeave) {
             status = 'On Leave';
             employeeSummary[email].LeaveDays += 1;
+          } else if (isHoliday) {
+            status = 'Holiday';
+            employeeSummary[email].HolidayDays += 1;
           } else if (isWeekOff) {
             status = 'Week Off';
             employeeSummary[email].WeekoffTaken += 1;
@@ -1493,7 +1508,7 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
           }
         }
         
-        if (!isWeekOff) {
+        if (!isWeekOff && !isHoliday) {
           employeeSummary[email].ExpectedWorkingDays += 1;
         }
 
@@ -1518,18 +1533,21 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
 
     const summaryData = Object.values(employeeSummary).map(emp => ({
       'Employee Name': emp.EmployeeName,
+      'Expected Working Days': emp.ExpectedWorkingDays,
+      'Absentee / Leaves': emp.AbsentDays + emp.LeaveDays,
+      'Late Login': emp.LateLogins,
+      'Early Logout': emp.EarlyLogouts,
+      'Extra Working Hours': formatHoursToHHMM(emp.TotalExtraDecimalHours),
+      'Week Off': emp.WeekoffTaken,
+      'Holiday': emp.HolidayDays,
+      'Present Days': emp.PresentDays,
+      'Total Days': emp.TotalDays,
       'Email': emp.Email,
       'Organization': emp.Organization,
       'Department': emp.Department,
-      'Expected Working Days': emp.ExpectedWorkingDays,
-      'Actual Working Days (Present)': emp.PresentDays,
       'Absent Days': emp.AbsentDays,
       'Leave Days': emp.LeaveDays,
-      'Week Offs': emp.WeekoffTaken,
-      'Late Logins (Count)': emp.LateLogins,
-      'Early Logouts (Count)': emp.EarlyLogouts,
-      'Total Working Hours (HH:MM)': formatHoursToHHMM(emp.TotalDecimalHours),
-      'Extra Working Hours (HH:MM)': formatHoursToHHMM(emp.TotalExtraDecimalHours)
+      'Total Working Hours': formatHoursToHHMM(emp.TotalDecimalHours)
     }));
 
     res.status(200).send({ exportData, summaryData });
