@@ -1419,9 +1419,12 @@ router.get('/performance-report', authenticateJWT, async (req, res) => {
       const mKey = moment(a.date).format('YYYY-MM');
       if (!monthlyMap[mKey]) continue;
 
-      monthlyMap[mKey].hours += a.totalHours || 0;
-      totalHoursAll += a.totalHours || 0;
-      totalOvertimeAll += a.extraHours || 0;
+      const dayHours = Math.max(0, a.totalHours || 0);
+      const dayOvertime = Math.max(0, a.extraHours || 0);
+
+      monthlyMap[mKey].hours += dayHours;
+      totalHoursAll += dayHours;
+      totalOvertimeAll += dayOvertime;
 
       if (PRESENT_REMARKS.includes(a.finalRemark)) {
         presentDays++;
@@ -1492,8 +1495,8 @@ router.get('/performance-report', authenticateJWT, async (req, res) => {
     }
 
     // ── Calculate scores ───────────────────────────────────────────────
-    const avgDailyHours = presentDays > 0 ? parseFloat((totalHoursAll / presentDays).toFixed(2)) : 0;
-    const overtimeHours = parseFloat(totalOvertimeAll.toFixed(2));
+    const avgDailyHours = presentDays > 0 ? Math.max(0, parseFloat((totalHoursAll / presentDays).toFixed(2))) : 0;
+    const overtimeHours = Math.max(0, parseFloat(totalOvertimeAll.toFixed(2)));
 
     // Punctuality score: (present - late) / present * 100
     const punctualityScore = presentDays > 0
@@ -1530,7 +1533,7 @@ router.get('/performance-report', authenticateJWT, async (req, res) => {
 
     const monthlyHours = Object.values(monthlyMap).map(m => ({
       month: m.month,
-      hours: parseFloat(m.hours.toFixed(1)),
+      hours: Math.max(0, parseFloat(m.hours.toFixed(1))),
       presentDays: m.present,
       lateDays: m.late
     }));

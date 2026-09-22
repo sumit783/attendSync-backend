@@ -502,3 +502,30 @@ model Expense {
   @@index([employeeId])
   @@index([organizationId, status])
 }
+
+model ActivityLog {
+  id               String   @id @default(uuid())
+  method           String   // POST, PUT, PATCH, DELETE
+  url              String   @db.VarChar(500)
+  route            String?  @db.VarChar(255)
+  statusCode       Int
+  ipAddress        String?  @db.VarChar(100)
+  userAgent        String?  @db.Text
+  
+  userId           String?  @db.VarChar(100)
+  userName         String?  @db.VarChar(150)
+  userEmail        String?  @db.VarChar(150)
+  role             String?  @db.VarChar(50)
+  organizationCode String?  @db.VarChar(50)
+  organizationId   String?  @db.VarChar(100)
+  
+  requestBody      String?  @db.LongText
+  responseTimeMs   Int?
+  
+  createdAt        DateTime @default(now())
+
+  @@index([method])
+  @@index([statusCode])
+  @@index([organizationCode])
+  @@index([createdAt])
+}

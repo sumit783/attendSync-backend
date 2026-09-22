@@ -1,14 +1,50 @@
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
+const prisma = require('../prisma/client');
 const superAdminController = require('../controllers/superAdminController');
+const activityLogController = require('../controllers/activityLogController');
 
-// Middleware to protect super admin routes with the "2492" passcode
-const requireSuperAdmin = (req, res, next) => {
+// Middleware to protect super admin routes with the "2492" passcode or SUPER_ADMIN JWT
+const requireSuperAdmin = async (req, res, next) => {
     const passcode = req.headers['x-superadmin-key'] || req.query.key;
-    if (passcode !== '2492') {
-        return res.status(403).send({ message: 'Forbidden. Invalid Super Admin passcode.' });
+    if (passcode === '2492') {
+        return next();
     }
-    next();
+
+    // Check JWT Bearer Token if present
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        try {
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            if (decoded) {
+                const normRole = (decoded.role || '').toUpperCase();
+                if (normRole === 'SUPER_ADMIN' || normRole === 'SUPERADMIN' || decoded.organizationCode === '2492') {
+                    req.user = decoded;
+                    return next();
+                }
+
+                // Check Admin table in Prisma
+                if (decoded.id) {
+                    const admin = await prisma.admin.findUnique({
+                        where: { id: decoded.id },
+                        include: { roles: true }
+                    });
+                    if (admin && admin.roles && admin.roles.some(r => r.role === 'SUPER_ADMIN')) {
+                        req.user = decoded;
+                        req.adminId = admin.id;
+                        req.adminRoles = admin.roles;
+                        return next();
+                    }
+                }
+            }
+        } catch (e) {
+            // Token invalid
+        }
+    }
+
+    return res.status(403).send({ message: 'Forbidden. Super Admin access required.' });
 };
 
 // #swagger.tags = ['Super Admin']
@@ -19,16 +55,6 @@ const requireSuperAdmin = (req, res, next) => {
  *   get:
  *     summary: Get all support queries across all organizations (Super Admin)
  *     tags: [Super Admin]
- *     parameters:
- *       - in: header
- *         name: x-superadmin-key
- *         required: true
- *         schema:
- *           type: string
- *         description: Passcode (e.g. 2492)
- *     responses:
- *       200:
- *         description: List of all queries
  */
 router.get('/queries', requireSuperAdmin, superAdminController.getAllQueries);
 
@@ -38,33 +64,26 @@ router.get('/queries', requireSuperAdmin, superAdminController.getAllQueries);
  *   patch:
  *     summary: Update a support query status (Super Admin)
  *     tags: [Super Admin]
- *     parameters:
- *       - in: header
- *         name: x-superadmin-key
- *         required: true
- *         schema:
- *           type: string
- *       - in: path
- *         name: queryId
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - status
- *             properties:
- *               status:
- *                 type: string
- *                 enum: [PENDING, IN_PROCESS, RESOLVED, CANCELLED]
- *     responses:
- *       200:
- *         description: Status updated successfully
  */
 router.patch('/queries/:queryId/status', requireSuperAdmin, superAdminController.updateQueryStatus);
 
+/**
+ * @swagger
+ * /api/superadmin/activity-logs:
+ *   get:
+ *     summary: Get saved POST/PUT/PATCH/DELETE activity logs (Super Admin)
+ *     tags: [Super Admin]
+ */
+router.get('/activity-logs', requireSuperAdmin, activityLogController.getActivityLogs);
+
+/**
+ * @swagger
+ * /api/superadmin/activity-logs/clear:
+ *   delete:
+ *     summary: Clear activity logs (Super Admin)
+ *     tags: [Super Admin]
+ */
+router.delete('/activity-logs/clear', requireSuperAdmin, activityLogController.clearActivityLogs);
+
 module.exports = router;
+

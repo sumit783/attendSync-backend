@@ -111,12 +111,17 @@ app.use(hpp());
 // Compress responses
 app.use(compression());
 
+const activityLoggerMiddleware = require('./middleware/activityLogger');
+
 // Set Cache-Control headers for API routes
 app.use('/api', (req, res, next) => {
   // Prevent shared CDNs from caching, but allow browser ETag revalidation
   res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
   next();
 });
+
+// Activity Logger for all POST / PUT / PATCH / DELETE routes
+app.use('/api', activityLoggerMiddleware);
 
 // AbsenceMarker();
 
