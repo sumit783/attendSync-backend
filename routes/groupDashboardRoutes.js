@@ -77,6 +77,8 @@ router.get('/stats', async (req, res) => {
             where: { id: { in: orgIds } },
             select: { organizationCode: true }
         });
+        const orgCodes = orgs.map(o => o.organizationCode).filter(Boolean);
+
         // Fetch active attendance records for today (employees who clocked in / regularized / present)
         const todayAttendances = await prisma.attendance.findMany({
             where: {
@@ -271,7 +273,7 @@ router.get('/expense-trends', async (req, res) => {
         const expenses = await prisma.expense.findMany({
             where: {
                 organizationCode: { in: orgCodes },
-                status: { in: ['Approved', 'Paid'] },
+                status: { in: ['APPROVED', 'PAID'] },
                 createdAt: { gte: rangeStart, lte: rangeEnd }
             },
             select: { amount: true, createdAt: true, organizationCode: true }
@@ -387,7 +389,7 @@ router.get('/approvals', async (req, res) => {
                 orderBy: { createdAt: 'desc' }
             }),
             prisma.expense.findMany({
-                where: { organizationCode: { in: orgCodes }, status: 'Pending' },
+                where: { organizationCode: { in: orgCodes }, status: 'PENDING' },
                 include: { employee: { select: { employeeName: true } } },
                 take: 5,
                 orderBy: { createdAt: 'desc' }
