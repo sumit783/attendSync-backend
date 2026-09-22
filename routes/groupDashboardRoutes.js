@@ -77,28 +77,42 @@ router.get('/stats', async (req, res) => {
             where: { id: { in: orgIds } },
             select: { organizationCode: true }
         });
-        const orgCodes = orgs.map(o => o.organizationCode).filter(Boolean);
+        // Fetch active attendance records for today (employees who clocked in / regularized / present)
+        const todayAttendances = await prisma.attendance.findMany({
+            where: {
+                organizationCode: { in: orgCodes },
+                date: { gte: today, lte: endOfToday },
+                finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] }
+            },
+            select: { employeeId: true, organizationCode: true }
+        });
 
-        const [totalWorkforce, presentToday, onLeaveToday] = await Promise.all([
-            prisma.employee.count({
-                where: { organizationId: { in: orgIds }, status: 'active' }
-            }),
-            prisma.attendance.count({
-                where: {
-                    organizationCode: { in: orgCodes },
-                    date: { gte: today, lte: endOfToday },
-                    finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] }
-                }
-            }),
-            prisma.leave.count({
-                where: {
-                    organizationCode: { in: orgCodes },
-                    status: 'Approved',
-                    startDate: { lte: endOfToday },
-                    endDate: { gte: today }
-                }
-            })
-        ]);
+        const presentEmpIds = new Set(todayAttendances.map(a => a.employeeId));
+
+        // Fetch approved leaves covering today
+        const approvedLeaves = await prisma.leave.findMany({
+            where: {
+                organizationCode: { in: orgCodes },
+                status: 'Approved',
+                startDate: { lte: endOfToday },
+                endDate: { gte: today }
+            },
+            select: { employeeId: true, organizationCode: true }
+        });
+
+        // Unique employees on leave today who haven't logged in/present today
+        const activeLeaveEmpIds = new Set();
+        approvedLeaves.forEach(l => {
+            if (!presentEmpIds.has(l.employeeId)) {
+                activeLeaveEmpIds.add(l.employeeId);
+            }
+        });
+
+        const totalWorkforce = await prisma.employee.count({
+            where: { organizationId: { in: orgIds }, status: 'active' }
+        });
+        const presentToday = todayAttendances.length;
+        const onLeaveToday = activeLeaveEmpIds.size;
 
         res.status(200).send({
             managedCompanies,
@@ -129,38 +143,46 @@ router.get('/attendance-by-company', async (req, res) => {
 
         const orgCodes = orgs.map(o => o.organizationCode).filter(Boolean);
 
-        const [presentCountsData, leaveCountsData] = await Promise.all([
-            prisma.attendance.groupBy({
-                by: ['organizationCode'],
-                _count: true,
+        const [todayAttendances, approvedLeaves] = await Promise.all([
+            prisma.attendance.findMany({
                 where: {
                     organizationCode: { in: orgCodes },
                     date: { gte: today, lte: endOfToday },
                     finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] }
-                }
+                },
+                select: { employeeId: true, organizationCode: true }
             }),
-            prisma.leave.groupBy({
-                by: ['organizationCode'],
-                _count: true,
+            prisma.leave.findMany({
                 where: {
                     organizationCode: { in: orgCodes },
                     status: 'Approved',
                     startDate: { lte: endOfToday },
                     endDate: { gte: today }
-                }
+                },
+                select: { employeeId: true, organizationCode: true }
             })
         ]);
 
-        const presentMap = {};
-        presentCountsData.forEach(item => { presentMap[item.organizationCode] = item._count; });
+        const presentByOrg = {};
+        const presentEmpIds = new Set();
+        todayAttendances.forEach(a => {
+            presentByOrg[a.organizationCode] = (presentByOrg[a.organizationCode] || 0) + 1;
+            presentEmpIds.add(a.employeeId);
+        });
 
-        const leaveMap = {};
-        leaveCountsData.forEach(item => { leaveMap[item.organizationCode] = item._count; });
+        const leaveByOrg = {};
+        const countedLeaveEmpIds = new Set();
+        approvedLeaves.forEach(l => {
+            if (!presentEmpIds.has(l.employeeId) && !countedLeaveEmpIds.has(l.employeeId)) {
+                countedLeaveEmpIds.add(l.employeeId);
+                leaveByOrg[l.organizationCode] = (leaveByOrg[l.organizationCode] || 0) + 1;
+            }
+        });
 
         const attendanceData = orgs.map(org => {
             const total = org.employeeCount || 0;
-            const presentCount = presentMap[org.organizationCode] || 0;
-            const leaveCount = leaveMap[org.organizationCode] || 0;
+            const presentCount = presentByOrg[org.organizationCode] || 0;
+            const leaveCount = leaveByOrg[org.organizationCode] || 0;
             const absentCount = Math.max(0, total - presentCount - leaveCount);
 
             return {
