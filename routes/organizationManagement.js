@@ -182,11 +182,11 @@ router.get('/employees', authenticateAdmin, requireOrganizationAccess, async (re
 
     const deriveStatus = (emp) => {
       if (emp.status === 'inactive') return 'Inactive';
-      if (onLeaveEmpIds.has(emp.id)) return 'On Leave';
       if (attendanceByEmpId.has(emp.id)) {
         if (isEmpLate(emp)) return 'Late';
         return 'Present';
       }
+      if (onLeaveEmpIds.has(emp.id)) return 'On Leave';
       return 'Absent';
     };
 
