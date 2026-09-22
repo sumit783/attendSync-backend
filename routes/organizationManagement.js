@@ -2140,8 +2140,28 @@ router.get('/expenses', authenticateAdmin, requireOrganizationAccess, async (req
       _sum: { amount: true }
     });
 
-    const statsMap = { PENDING: 0, APPROVED: 0, REJECTED: 0, PAID: 0 };
-    stats.forEach(s => { statsMap[s.status] = s._count.status; });
+    const statsMap = {
+      PENDING: 0,
+      APPROVED: 0,
+      REJECTED: 0,
+      PAID: 0,
+      approvedAmount: 0,
+      paidAmount: 0,
+      pendingAmount: 0,
+      rejectedAmount: 0,
+      totalAmount: 0
+    };
+
+    stats.forEach(s => {
+      statsMap[s.status] = s._count.status;
+      if (s.status === 'APPROVED') statsMap.approvedAmount = s._sum.amount || 0;
+      if (s.status === 'PAID') statsMap.paidAmount = s._sum.amount || 0;
+      if (s.status === 'PENDING') statsMap.pendingAmount = s._sum.amount || 0;
+      if (s.status === 'REJECTED') statsMap.rejectedAmount = s._sum.amount || 0;
+    });
+
+    // Total expense amount for stats: ONLY include Approved and Paid claims (exclude Rejected and Pending)
+    statsMap.totalAmount = (statsMap.approvedAmount || 0) + (statsMap.paidAmount || 0);
 
     return res.status(200).json({
       expenses,
