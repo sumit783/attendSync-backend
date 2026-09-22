@@ -121,24 +121,22 @@ exports.verifyOtp = async (req, res) => {
       };
 
       if (action === 'verify-email') {
-          updateData.isVerified = true;
-      } else if (action === 'forgot-password') {
           await prisma.admin.update({
               where: { id: user.id },
-              data: updateData
+              data: {
+                  isVerified: true,
+                  otp: null,
+                  otpExpires: null
+              }
           });
+          return res.status(200).send({ message: 'Email verified successfully.' });
+      } else if (action === 'forgot-password') {
+          // For forgot-password, verify OTP validity here but do not erase OTP yet
+          // It will be erased once reset-password successfully executes
           return res.status(200).send({ message: 'OTP verified. You can now reset your password.' });
       } else {
           return res.status(400).send({ message: 'Invalid action specified.' });
       }
-
-      await prisma.admin.update({
-          where: { id: user.id },
-          data: updateData
-      });
-
-      res.status(200).send({ message: 'Email verified successfully.' });
-
   } catch (error) {
       console.error('Error in /admin/verify-otp:', error);
       res.status(500).send({ message: 'Internal Server Error' });
@@ -156,7 +154,7 @@ exports.forgotPassword = async (req, res) => {
         where: { id: user.id },
         data: {
             otp,
-            otpExpires: new Date(Date.now() + 2 * 60 * 1000)
+            otpExpires: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes validity
         }
     });
   

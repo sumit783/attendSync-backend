@@ -45,22 +45,40 @@ const getOrgIdsToQuery = async (adminId, requestedCompanyId) => {
     return orgIds;
 };
 
+// Helper to parse month range
+const getMonthRange = (month) => {
+    let startOfMonth = moment().tz('Asia/Kolkata').startOf('month').toDate();
+    let endOfMonth = moment().tz('Asia/Kolkata').endOf('month').toDate();
+
+    if (month && typeof month === 'string') {
+        const parsed = moment(month, ['MMM YYYY', 'YYYY-MM', 'YYYY-MM-DD']);
+        if (parsed.isValid()) {
+            startOfMonth = parsed.tz('Asia/Kolkata').startOf('month').toDate();
+            endOfMonth = parsed.tz('Asia/Kolkata').endOf('month').toDate();
+        }
+    }
+    return { startOfMonth, endOfMonth };
+};
+
 // GET /api/organization/analytics/companies
 router.get('/companies', authenticateAdmin, async (req, res) => {
     try {
+        const { month } = req.query;
         const orgIds = await getOrgIdsToQuery(req.adminId, 'all');
         const orgs = await prisma.organization.findMany({
             where: { id: { in: orgIds } },
             include: { 
-                employees: { where: { status: 'active' } },
+                employees: { 
+                    where: { status: 'active' },
+                    include: { designations: true }
+                },
                 departments: {
                     include: { employees: { where: { status: 'active' } } }
                 }
             }
         });
 
-        const startOfMonth = moment().tz('Asia/Kolkata').startOf('month').toDate();
-        const endOfMonth = moment().tz('Asia/Kolkata').endOf('month').toDate();
+        const { startOfMonth, endOfMonth } = getMonthRange(month);
         
         const attendances = await prisma.attendance.findMany({
             where: {
@@ -120,7 +138,7 @@ router.get('/companies', authenticateAdmin, async (req, res) => {
                 };
             });
 
-            // Handle employees without department
+            // Handle employees without direct departmentId
             const unassignedEmps = org.employees.filter(emp => !emp.departmentId);
             if (unassignedEmps.length > 0) {
                 const depPayroll = unassignedEmps.reduce((sum, emp) => sum + (emp.salary || 0), 0);
@@ -219,7 +237,7 @@ router.get('/performance-trend', authenticateAdmin, async (req, res) => {
             });
             
             const totalAttendances = attendances.length;
-            const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'];
+            const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early'];
             const presentCount = attendances.filter(a => PRESENT_REMARKS.includes(a.finalRemark)).length;
             
             const attendanceScore = totalAttendances > 0 ? (presentCount / totalAttendances) * 40 : 35; 
@@ -249,7 +267,7 @@ router.get('/performance-trend', authenticateAdmin, async (req, res) => {
 // GET /api/organization/analytics/stats
 router.get('/stats', authenticateAdmin, async (req, res) => {
     try {
-        const { companyId, month } = req.query; // month e.g., 'Sep 2025' or ISO date
+        const { companyId, month } = req.query; // month e.g., 'Sep 2026' or ISO date
         const orgIds = await getOrgIdsToQuery(req.adminId, companyId);
         
         if (orgIds.length === 0) return res.json({ 
@@ -263,17 +281,7 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
             salaryTrend: '+0%'
         });
 
-        // Parse month or default to current month in Asia/Kolkata
-        let startOfMonth = moment().tz('Asia/Kolkata').startOf('month').toDate();
-        let endOfMonth = moment().tz('Asia/Kolkata').endOf('month').toDate();
-
-        if (month && typeof month === 'string') {
-            const parsed = moment(month, ['MMM YYYY', 'YYYY-MM', 'YYYY-MM-DD']);
-            if (parsed.isValid()) {
-                startOfMonth = parsed.tz('Asia/Kolkata').startOf('month').toDate();
-                endOfMonth = parsed.tz('Asia/Kolkata').endOf('month').toDate();
-            }
-        }
+        const { startOfMonth, endOfMonth } = getMonthRange(month);
 
         const [employees, attendances] = await Promise.all([
             prisma.employee.findMany({
@@ -323,11 +331,10 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
 // GET /api/organization/analytics/comparison
 router.get('/comparison', authenticateAdmin, async (req, res) => {
     try {
-        const { companyId } = req.query;
+        const { companyId, month } = req.query;
         const orgIds = await getOrgIdsToQuery(req.adminId, companyId);
         
-        const startOfMonth = moment().tz('Asia/Kolkata').startOf('month').toDate();
-        const endOfMonth = moment().tz('Asia/Kolkata').endOf('month').toDate();
+        const { startOfMonth, endOfMonth } = getMonthRange(month);
         
         const attendances = await prisma.attendance.findMany({
             where: {
@@ -402,7 +409,7 @@ router.get('/comparison', authenticateAdmin, async (req, res) => {
                 };
             });
 
-            // Handle employees without department
+            // Handle employees without direct departmentId
             const unassignedEmps = await prisma.employee.findMany({
                 where: {
                     organizationId: { in: orgIds },
@@ -441,12 +448,11 @@ router.get('/comparison', authenticateAdmin, async (req, res) => {
 // GET /api/organization/analytics/attendance-pie
 router.get('/attendance-pie', authenticateAdmin, async (req, res) => {
     try {
-        const { companyId } = req.query;
+        const { companyId, month } = req.query;
         const orgIds = await getOrgIdsToQuery(req.adminId, companyId);
         const colors = ['#38bdf8', '#10b981', '#a855f7', '#f59e0b', '#0ea5e9'];
         
-        const startOfMonth = moment().tz('Asia/Kolkata').startOf('month').toDate();
-        const endOfMonth = moment().tz('Asia/Kolkata').endOf('month').toDate();
+        const { startOfMonth, endOfMonth } = getMonthRange(month);
 
         const attendances = await prisma.attendance.findMany({
             where: {
@@ -511,7 +517,7 @@ router.get('/attendance-pie', authenticateAdmin, async (req, res) => {
                 };
             });
 
-            // If there are employees without department
+            // If there are employees without direct departmentId
             const unassignedEmps = await prisma.employee.findMany({
                 where: {
                     organizationId: { in: orgIds },
