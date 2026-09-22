@@ -213,33 +213,47 @@ router.get('/department-distribution', async (req, res) => {
     try {
         const orgIds = req.groupOrgIds;
 
-        const depts = await prisma.department.findMany({
-            where: { organizationId: { in: orgIds } },
-            include: { _count: { select: { employees: { where: { status: 'active' } } } } }
+        // Fetch all active employees across the organizations in this group
+        const employees = await prisma.employee.findMany({
+            where: {
+                organizationId: { in: orgIds },
+                status: 'active'
+            },
+            select: {
+                id: true,
+                departmentId: true,
+                department: { select: { id: true, name: true } },
+                designations: {
+                    select: {
+                        id: true,
+                        name: true,
+                        department: { select: { id: true, name: true } }
+                    },
+                    take: 1
+                }
+            }
         });
 
-        // Group by department name (across companies, many companies might have "Engineering")
+        // Tally department counts from actual active employee records
         const deptMap = {};
-        let totalAssigned = 0;
+        let totalCount = 0;
 
-        for (const d of depts) {
-            const count = d._count.employees;
-            if (count > 0) {
-                const name = d.name;
-                if (!deptMap[name]) deptMap[name] = 0;
-                deptMap[name] += count;
-                totalAssigned += count;
-            }
+        for (const emp of employees) {
+            // Priority: direct department -> designation department -> 'Unassigned'
+            const deptName = emp.department?.name || emp.designations?.[0]?.department?.name || 'Unassigned';
+            deptMap[deptName] = (deptMap[deptName] || 0) + 1;
+            totalCount++;
         }
 
         const data = Object.keys(deptMap).map(name => ({
             name,
-            value: totalAssigned > 0 ? Math.round((deptMap[name] / totalAssigned) * 100) : 0,
-            count: deptMap[name]
+            count: deptMap[name],
+            value: deptMap[name], // Use raw count for PieChart dataKey to preserve accurate slicing and tooltip values
+            percentage: totalCount > 0 ? parseFloat(((deptMap[name] / totalCount) * 100).toFixed(1)) : 0
         }));
 
-        // Sort by value desc
-        data.sort((a, b) => b.value - a.value);
+        // Sort by count descending
+        data.sort((a, b) => b.count - a.count);
 
         res.status(200).send(data);
     } catch (error) {
@@ -329,11 +343,13 @@ router.get('/leave-trends', async (req, res) => {
         });
         const orgCodes = orgs.map(o => o.organizationCode).filter(Boolean);
 
+        // Fetch all approved leaves that overlap with the 6-month window
         const leaves = await prisma.leave.findMany({
             where: {
                 organizationCode: { in: orgCodes },
                 status: 'Approved',
-                startDate: { gte: rangeStart, lte: rangeEnd }
+                startDate: { lte: rangeEnd },
+                endDate: { gte: rangeStart }
             },
             select: { startDate: true, endDate: true }
         });
@@ -341,15 +357,20 @@ router.get('/leave-trends', async (req, res) => {
         const trends = [];
         for (let i = 5; i >= 0; i--) {
             const m = now.clone().subtract(i, 'months');
-            const mKey = m.format('YYYY-MM');
+            const monthStart = m.clone().startOf('month');
+            const monthEnd = m.clone().endOf('month');
             
             let totalLeaves = 0;
             for (const leave of leaves) {
-                if (moment(leave.startDate).format('YYYY-MM') === mKey) {
-                    // Count number of days
-                    const start = moment(leave.startDate);
-                    const end = moment(leave.endDate);
-                    totalLeaves += Math.max(1, end.diff(start, 'days') + 1);
+                const lStart = moment(leave.startDate).tz('Asia/Kolkata');
+                const lEnd = moment(leave.endDate).tz('Asia/Kolkata');
+
+                // Compute exact intersection of leave range with the current month
+                const overlapStart = moment.max(monthStart, lStart);
+                const overlapEnd = moment.min(monthEnd, lEnd);
+
+                if (overlapEnd.isSameOrAfter(overlapStart, 'day')) {
+                    totalLeaves += overlapEnd.diff(overlapStart, 'days') + 1;
                 }
             }
 
