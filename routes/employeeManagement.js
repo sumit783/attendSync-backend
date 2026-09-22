@@ -488,8 +488,9 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
                     actualWorkingDays++;
                 }
             }
-            if (a.totalHours) completedWorkingHours += a.totalHours;
-            if (a.extraHours) completedWorkingHours += a.extraHours;
+            const dayTotal = Math.max(0, a.totalHours || 0);
+            const dayExtra = Math.max(0, a.extraHours || 0);
+            completedWorkingHours += dayTotal + dayExtra;
         }
 
         let currentDay = currentMonthStart.clone();
@@ -513,8 +514,8 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
             if (dailyShiftHours < 0) dailyShiftHours += 24; // overnight shift
         }
 
-        const expectedWorkingHours = parseFloat((expectedWorkingDays * dailyShiftHours).toFixed(2));
-        completedWorkingHours = parseFloat(completedWorkingHours.toFixed(2));
+        const expectedWorkingHours = Math.max(0, parseFloat((expectedWorkingDays * dailyShiftHours).toFixed(2)));
+        completedWorkingHours = Math.max(0, parseFloat(completedWorkingHours.toFixed(2)));
         const salary = employee.salary || 0;
 
         res.status(200).json({
