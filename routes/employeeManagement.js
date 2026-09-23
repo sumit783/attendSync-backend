@@ -139,61 +139,30 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
         const searchStart = shiftStart.clone().subtract(12, 'hours').toDate();
         const searchEnd = shiftEnd.clone().add(4, 'hours').toDate();
 
-        // Find today's attendance
-        let attendanceRecord = await prisma.attendance.findFirst({
+        // 1. First check if there is an active unclosed session for this employee
+        const activeSession = await prisma.session.findFirst({
             where: {
-                employeeId: employee.id,
-                date: {
-                    gte: searchStart,
-                    lte: searchEnd
+                clockOutTime: null,
+                attendance: {
+                    employeeId: employee.id
                 }
             },
-            orderBy: { date: 'desc' },
-            include: { sessions: true }
+            include: {
+                attendance: {
+                    include: { sessions: true }
+                }
+            },
+            orderBy: { clockInTime: 'desc' }
         });
 
-        if (!attendanceRecord) {
-            // First time clock-in
-            let clockInRemark = 'Present';
-            if (moment(currentLocalTime).isSame(moment(organizationInTime), 'minute')) {
-                clockInRemark = 'On Time';
-            } else if (moment(currentLocalTime).isAfter(moment(organizationInTime))) {
-                clockInRemark = 'Late';
-            } else if (moment(currentLocalTime).isBefore(moment(organizationInTime))) {
-                clockInRemark = 'Early Login';
-            }
-
-            attendanceRecord = await prisma.attendance.create({
-                data: {
-                    employeeId: employee.id,
-                    employeeName: employee.employeeName,
-                    organizationCode: employee.organizationCode,
-                    date: currentLocalTime,
-                    wifiSSID,
-                    wifiBSSID,
-                    deviceId,
-                    ipAddress,
-                    latitude: employeeLatitude,
-                    longitude: employeeLongitude,
-                    finalRemark: 'Clocked In',
-                    sessions: {
-                        create: {
-                            clockInTime: currentLocalTime,
-                            clockInRemark
-                        }
-                    }
-                },
-                include: { sessions: true }
-            });
-
-            return res.status(200).json({ message: 'Clocked in successfully.', clockInTime: currentLocalTime, clockInRemark, finalRemark: 'Clocked In' });
-        }
-
-        const lastSession = attendanceRecord.sessions[attendanceRecord.sessions.length - 1];
-
-        if (!lastSession.clockOutTime) {
-            // Clock out
-            const duration = Math.max(0.01, ((currentLocalTime - lastSession.clockInTime) / (1000 * 60 * 60)).toFixed(2));
+        if (activeSession) {
+            // Clock out from the active session
+            const attendanceRecord = activeSession.attendance;
+            const lastSession = activeSession;
+            
+            const diffMs = moment(currentLocalTime).diff(moment(lastSession.clockInTime));
+            const duration = Math.max(0.01, parseFloat((diffMs / (1000 * 60 * 60)).toFixed(2)));
+            
             let clockOutRemark = 'Present';
             if (moment(currentLocalTime).isSame(moment(organizationOutTime), 'minute')) {
                 clockOutRemark = 'On Time';
@@ -211,7 +180,7 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             });
 
             const updatedSessions = await prisma.session.findMany({ where: { attendanceId: attendanceRecord.id } });
-            const totalHours = updatedSessions.reduce((acc, s) => acc + (s.duration || 0), 0);
+            const totalHours = parseFloat(updatedSessions.reduce((acc, s) => acc + (s.duration || 0), 0).toFixed(2));
             
             // Calculate extra hours
             const expectedDurationMs = moment(organizationOutTime).diff(moment(organizationInTime));
@@ -250,6 +219,56 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             });
 
             return res.status(200).json({ message: 'Clocked out successfully.', clockOutTime: currentLocalTime, totalHours, extraHours, finalRemark });
+        }
+
+        // 2. If no active session, it is a clock-in: check if an attendance record exists for today / current shift
+        let attendanceRecord = await prisma.attendance.findFirst({
+            where: {
+                employeeId: employee.id,
+                date: {
+                    gte: searchStart,
+                    lte: searchEnd
+                }
+            },
+            orderBy: { date: 'desc' },
+            include: { sessions: true }
+        });
+
+        if (!attendanceRecord) {
+            // First time clock-in for this date / shift
+            let clockInRemark = 'Present';
+            if (moment(currentLocalTime).isSame(moment(organizationInTime), 'minute')) {
+                clockInRemark = 'On Time';
+            } else if (moment(currentLocalTime).isAfter(moment(organizationInTime))) {
+                clockInRemark = 'Late';
+            } else if (moment(currentLocalTime).isBefore(moment(organizationInTime))) {
+                clockInRemark = 'Early Login';
+            }
+
+            attendanceRecord = await prisma.attendance.create({
+                data: {
+                    employeeId: employee.id,
+                    employeeName: employee.employeeName,
+                    organizationCode: employee.organizationCode,
+                    date: currentLocalTime,
+                    wifiSSID,
+                    wifiBSSID,
+                    deviceId,
+                    ipAddress,
+                    latitude: employeeLatitude,
+                    longitude: employeeLongitude,
+                    finalRemark: 'Clocked In',
+                    sessions: {
+                        create: {
+                            clockInTime: currentLocalTime,
+                            clockInRemark
+                        }
+                    }
+                },
+                include: { sessions: true }
+            });
+
+            return res.status(200).json({ message: 'Clocked in successfully.', clockInTime: currentLocalTime, clockInRemark, finalRemark: 'Clocked In' });
         } else {
             // Additional Clock-in
             await prisma.session.create({
@@ -258,6 +277,11 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
                     clockInTime: currentLocalTime,
                     clockInRemark: 'Present'
                 }
+            });
+
+            await prisma.attendance.update({
+                where: { id: attendanceRecord.id },
+                data: { finalRemark: 'Clocked In' }
             });
 
             return res.status(200).json({ message: 'Clocked in successfully.', clockInTime: currentLocalTime });
@@ -822,8 +846,8 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
 
         // Get the selected date from params
         const selectedDate = req.params.date; // Format: YYYY-MM-DD
-        const startOfDay = moment(selectedDate).startOf('day').toDate();
-        const endOfDay = moment(selectedDate).endOf('day').toDate();
+        const startOfDay = moment.tz(selectedDate, 'YYYY-MM-DD', 'Asia/Kolkata').startOf('day').toDate();
+        const endOfDay = moment.tz(selectedDate, 'YYYY-MM-DD', 'Asia/Kolkata').endOf('day').toDate();
 
         // Fetch attendance record for the selected date
         const attendanceRecord = await prisma.attendance.findFirst({
@@ -844,9 +868,8 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
             totalHours = attendanceRecord.sessions.reduce((sum, session) => {
                 let duration = session.duration || 0;
                 if (!session.clockOutTime && session.clockInTime) {
-                    const now = moment();
-                    const end = moment.min(now, moment(attendanceRecord.date).endOf('day'));
-                    duration = Math.max(0, end.diff(moment(session.clockInTime)) / (1000 * 60 * 60));
+                    const now = moment().tz('Asia/Kolkata');
+                    duration = Math.max(0, now.diff(moment(session.clockInTime)) / (1000 * 60 * 60));
                 }
                 return sum + duration;
             }, 0);
@@ -878,7 +901,9 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
 
         // Determine Status
         let status = 'Absent';
-        if (firstSession) {
+        if (attendanceRecord.finalRemark && attendanceRecord.finalRemark !== 'Absent') {
+            status = attendanceRecord.finalRemark;
+        } else if (firstSession) {
             if (firstSession.clockInRemark === 'Late') {
                 status = 'Late';
             } else if (firstSession.clockInRemark === 'Early Login') {
@@ -915,6 +940,8 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
             breakTime: breakTime,
             overtime: overtime,
             status: status,
+            finalRemark: attendanceRecord.finalRemark,
+            regularized: attendanceRecord.regularized,
             sessions: formattedSessions, // Include all sessions
         };
 
