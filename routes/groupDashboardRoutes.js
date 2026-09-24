@@ -546,4 +546,205 @@ router.get('/alerts', async (req, res) => {
 const { getCompanyComparison } = require('../controllers/companyComparisonController');
 router.get('/company-comparison', getCompanyComparison);
 
+// ==========================================
+// 9. ALL EMPLOYEES ACROSS GROUP (SUPER ADMIN)
+// ==========================================
+router.get('/employees', async (req, res) => {
+    try {
+        const { page = 1, limit = 10, search, status, companyId } = req.query;
+        const pageNum = parseInt(page);
+        const limitNum = parseInt(limit);
+        const skip = (pageNum - 1) * limitNum;
+
+        // Fetch organizations in this group
+        const orgs = await prisma.organization.findMany({
+            where: { id: { in: req.groupOrgIds } },
+            select: { id: true, organizationName: true, organizationCode: true, inTime: true }
+        });
+
+        const orgCodes = orgs.map(o => o.organizationCode).filter(Boolean);
+        const orgCodeToOrg = new Map(orgs.map(o => [o.organizationCode, o]));
+        const orgIdToOrg = new Map(orgs.map(o => [o.id, o]));
+
+        const todayStart = moment().tz('Asia/Kolkata').startOf('day').toDate();
+        const todayEnd = moment().tz('Asia/Kolkata').endOf('day').toDate();
+
+        // Target organization IDs filter
+        const targetOrgIds = (companyId && companyId !== 'all' && req.groupOrgIds.includes(companyId))
+            ? [companyId]
+            : req.groupOrgIds;
+
+        const baseWhere = {
+            organizationId: { in: targetOrgIds }
+        };
+
+        if (search && search.trim()) {
+            const s = search.trim();
+            const matchingOrgs = orgs.filter(o => o.organizationName && o.organizationName.toLowerCase().includes(s.toLowerCase()));
+            const matchingOrgIds = matchingOrgs.map(o => o.id);
+
+            baseWhere.OR = [
+                { employeeName: { contains: s } },
+                { employeeEmail: { contains: s } },
+                { organizationCode: { contains: s } },
+                ...(matchingOrgIds.length > 0 ? [{ organizationId: { in: matchingOrgIds } }] : [])
+            ];
+        }
+
+        // Parallelize today's attendances and leaves for status calculation
+        const [attendances, approvedLeaves] = await Promise.all([
+            prisma.attendance.findMany({
+                where: {
+                    OR: [
+                        { organizationCode: { in: orgCodes } },
+                        { employee: { organizationId: { in: req.groupOrgIds } } }
+                    ],
+                    date: { gte: todayStart, lte: todayEnd }
+                },
+                select: {
+                    employeeId: true,
+                    organizationCode: true,
+                    sessions: {
+                        select: { clockInTime: true },
+                        orderBy: { clockInTime: 'asc' },
+                        take: 1
+                    }
+                }
+            }),
+            prisma.leave.findMany({
+                where: {
+                    OR: [
+                        { organizationCode: { in: orgCodes } },
+                        { employee: { organizationId: { in: req.groupOrgIds } } }
+                    ],
+                    status: 'Approved',
+                    startDate: { lte: todayEnd },
+                    endDate: { gte: todayStart }
+                },
+                select: { employeeId: true }
+            })
+        ]);
+
+        const attendanceByEmpId = new Map(attendances.map(a => [a.employeeId, a]));
+        const onLeaveEmpIds = new Set(approvedLeaves.map(l => l.employeeId));
+
+        const isEmpLate = (emp) => {
+            const att = attendanceByEmpId.get(emp.id);
+            if (!att || !att.sessions || att.sessions.length === 0) return false;
+            const firstSession = att.sessions[0];
+            if (!firstSession.clockInTime) return false;
+
+            const clockInDate = new Date(firstSession.clockInTime);
+            const orgInTimeStr = emp.organization?.inTime || (emp.organizationCode ? orgCodeToOrg.get(emp.organizationCode)?.inTime : null) || '09:00';
+            const inTimeStr = emp.shift?.startTime || orgInTimeStr;
+            const [hours, minutes] = inTimeStr.split(':');
+            const expectedInTime = moment(todayStart).hours(parseInt(hours || '9')).minutes(parseInt(minutes || '0')).seconds(0).toDate();
+            return clockInDate > expectedInTime;
+        };
+
+        const deriveStatus = (emp) => {
+            if (emp.status === 'inactive') return 'Inactive';
+            if (attendanceByEmpId.has(emp.id)) {
+                if (isEmpLate(emp)) return 'Late';
+                return 'Present';
+            }
+            if (onLeaveEmpIds.has(emp.id)) return 'On Leave';
+            return 'Absent';
+        };
+
+        // Query all matching employees for accurate total stats & filtering
+        const allEmpInfo = await prisma.employee.findMany({
+            where: baseWhere,
+            select: {
+                id: true,
+                status: true,
+                organizationId: true,
+                organizationCode: true,
+                shift: { select: { startTime: true } }
+            }
+        });
+
+        const withStatus = allEmpInfo.map(emp => ({
+            id: emp.id,
+            derivedStatus: deriveStatus(emp)
+        }));
+
+        const stats = {
+            total: withStatus.length,
+            present: withStatus.filter(e => e.derivedStatus === 'Present' || e.derivedStatus === 'Late').length,
+            late: withStatus.filter(e => e.derivedStatus === 'Late').length,
+            absent: withStatus.filter(e => e.derivedStatus === 'Absent').length,
+            onleave: withStatus.filter(e => e.derivedStatus === 'On Leave').length
+        };
+
+        let matchingIds = withStatus.map(e => e.id);
+        if (status && status !== 'All') {
+            const targetStatus = status.toLowerCase();
+            matchingIds = withStatus
+                .filter(e => {
+                    if (targetStatus === 'present') return e.derivedStatus === 'Present' || e.derivedStatus === 'Late';
+                    return e.derivedStatus.toLowerCase() === targetStatus;
+                })
+                .map(e => e.id);
+        }
+
+        const total = matchingIds.length;
+        const pageIds = matchingIds.slice(skip, skip + limitNum);
+
+        if (pageIds.length === 0) {
+            return res.status(200).send({
+                employees: [],
+                stats,
+                pagination: { total: 0, page: pageNum, limit: limitNum, totalPages: 0 }
+            });
+        }
+
+        const pageEmployees = await prisma.employee.findMany({
+            where: { id: { in: pageIds } },
+            select: {
+                id: true,
+                employeeName: true,
+                employeeEmail: true,
+                profilePic: true,
+                salary: true,
+                status: true,
+                organizationId: true,
+                organizationCode: true,
+                organization: {
+                    select: {
+                        id: true,
+                        organizationName: true,
+                        organizationCode: true,
+                        inTime: true
+                    }
+                },
+                shift: { select: { id: true, name: true, startTime: true, endTime: true, weekOffs: true } },
+                department: { select: { id: true, name: true } },
+                customRole: { select: { id: true, name: true } },
+                designations: { select: { id: true, name: true } }
+            },
+            orderBy: { employeeName: 'asc' }
+        });
+
+        const enriched = pageEmployees.map(emp => {
+            const org = emp.organization || orgIdToOrg.get(emp.organizationId) || (emp.organizationCode ? orgCodeToOrg.get(emp.organizationCode) : null);
+            return {
+                ...emp,
+                organizationName: org?.organizationName || '',
+                status: deriveStatus(emp),
+                isLate: isEmpLate(emp)
+            };
+        });
+
+        res.status(200).send({
+            employees: enriched,
+            stats,
+            pagination: { total, page: pageNum, limit: limitNum, totalPages: Math.ceil(total / limitNum) }
+        });
+    } catch (error) {
+        console.error('Error fetching group employees:', error);
+        res.status(500).send({ message: 'Internal Server Error', error: error.message });
+    }
+});
+
 module.exports = router;
