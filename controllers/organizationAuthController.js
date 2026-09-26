@@ -319,20 +319,36 @@ exports.getSuperAdminOrganizations = async (req, res) => {
             return res.status(200).send({ organizations: [] });
         }
 
-        const superAdminOrgIds = superAdminRoles.map(role => role.organizationId);
+        // Check if the user has a global SUPER_ADMIN role (organizationId is null)
+        const isGlobalSuperAdmin = superAdminRoles.some(role => !role.organizationId);
+        const superAdminOrgIds = superAdminRoles
+            .map(role => role.organizationId)
+            .filter(Boolean);
 
-        // Fetch all organizations that are either directly the super admin orgs, or have one of them as a parent
-        const organizations = await prisma.organization.findMany({
-            where: {
-                OR: [
-                    { id: { in: superAdminOrgIds } },
-                    { parentId: { in: superAdminOrgIds } }
-                ]
-            },
-            orderBy: {
-                createdAt: 'desc'
-            }
-        });
+        let organizations;
+        if (isGlobalSuperAdmin) {
+            // Global Super Admin has access to all organizations
+            organizations = await prisma.organization.findMany({
+                orderBy: {
+                    createdAt: 'desc'
+                }
+            });
+        } else if (superAdminOrgIds.length > 0) {
+            // Fetch all organizations that are either directly the super admin orgs, or have one of them as a parent
+            organizations = await prisma.organization.findMany({
+                where: {
+                    OR: [
+                        { id: { in: superAdminOrgIds } },
+                        { parentId: { in: superAdminOrgIds } }
+                    ]
+                },
+                orderBy: {
+                    createdAt: 'desc'
+                }
+            });
+        } else {
+            organizations = [];
+        }
         
         res.status(200).send({ organizations });
     } catch (error) {
