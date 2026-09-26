@@ -1554,6 +1554,203 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
   }
 });
 
+// ================== Bulk Attendance Upload from Excel ==================
+router.post('/bulk-attendance', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+  // #swagger.tags = ['All Company']
+  try {
+    const { records } = req.body; // Array of { employeeName, inDate, inTime, outDate, outTime, finalRemark }
+    const organizationId = req.organizationId;
+
+    if (!records || !Array.isArray(records) || records.length === 0) {
+      return res.status(400).send({ message: 'records array is required and must not be empty.' });
+    }
+
+    const organization = req.targetOrganization || await prisma.organization.findUnique({
+      where: { id: organizationId }
+    });
+    if (!organization) return res.status(404).send({ message: 'Organization not found' });
+
+    // Fetch all employees of this org once for name matching
+    const employees = await prisma.employee.findMany({
+      where: { organizationCode: organization.organizationCode },
+      include: { shift: true }
+    });
+
+    // Build case-insensitive name map
+    const employeeMap = new Map();
+    for (const emp of employees) {
+      employeeMap.set(emp.employeeName.toLowerCase().trim(), emp);
+    }
+
+    const results = [];
+
+    for (const record of records) {
+      const { employeeName, inDate, inTime, outDate, outTime, finalRemark: customRemark } = record;
+
+      if (!employeeName || !inDate) {
+        results.push({ employeeName, status: 'error', message: 'Missing employeeName or inDate' });
+        continue;
+      }
+
+      const employee = employeeMap.get(employeeName.toLowerCase().trim());
+      if (!employee) {
+        results.push({ employeeName, status: 'error', message: `Employee not found: "${employeeName}"` });
+        continue;
+      }
+
+      try {
+        const dayStart = moment.tz(`${inDate} 00:00:00`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata').utc().toDate();
+        const dayEnd = moment.tz(`${inDate} 23:59:59`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata').utc().toDate();
+
+        const [existingAttendance] = await Promise.all([
+          prisma.attendance.findFirst({
+            where: { employeeId: employee.id, date: { gte: dayStart, lte: dayEnd } },
+            include: { sessions: true }
+          })
+        ]);
+
+        // Case 1: Absent / On Leave
+        if ((!inTime || customRemark === 'Absent' || customRemark === 'On Leave') && !outTime) {
+          const targetRemark = customRemark || 'Absent';
+          if (!existingAttendance) {
+            await prisma.attendance.create({
+              data: {
+                employeeId: employee.id,
+                employeeName: employee.employeeName,
+                organizationCode: employee.organizationCode,
+                date: dayStart,
+                finalRemark: targetRemark,
+                totalHours: 0,
+                extraHours: 0
+              }
+            });
+          } else {
+            await prisma.$transaction([
+              prisma.session.deleteMany({ where: { attendanceId: existingAttendance.id } }),
+              prisma.attendance.update({
+                where: { id: existingAttendance.id },
+                data: { finalRemark: targetRemark, totalHours: 0, extraHours: 0 }
+              })
+            ]);
+          }
+          results.push({ employeeName, status: 'success', finalRemark: targetRemark });
+          continue;
+        }
+
+        if (!inTime) {
+          results.push({ employeeName, status: 'error', message: 'inTime is required when not marking Absent/On Leave' });
+          continue;
+        }
+
+        // Determine Expected Times
+        const expectedInTimeStr = employee.shift ? employee.shift.startTime : (organization.inTime || '09:00');
+        const expectedOutTimeStr = employee.shift ? employee.shift.endTime : (organization.outTime || '18:00');
+        const orgInFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
+        const orgOutFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
+
+        const organizationInTime = moment.tz(`${inDate} ${expectedInTimeStr}`, `YYYY-MM-DD ${orgInFormat}`, 'Asia/Kolkata').utc().toDate();
+        let organizationOutTimeMom = moment.tz(`${inDate} ${expectedOutTimeStr}`, `YYYY-MM-DD ${orgOutFormat}`, 'Asia/Kolkata');
+        let organizationInTimeMom = moment.tz(`${inDate} ${expectedInTimeStr}`, `YYYY-MM-DD ${orgInFormat}`, 'Asia/Kolkata');
+        if (organizationOutTimeMom.isBefore(organizationInTimeMom)) organizationOutTimeMom.add(1, 'day');
+        const organizationOutTime = organizationOutTimeMom.utc().toDate();
+
+        const timeFormat = inTime.includes('AM') || inTime.includes('PM') ? 'hh:mm A' : 'HH:mm';
+        const clockInActionTime = moment.tz(`${inDate} ${inTime}`, `YYYY-MM-DD ${timeFormat}`, 'Asia/Kolkata').utc().toDate();
+
+        let clockInRemark = 'Present';
+        if (moment(clockInActionTime).isSame(moment(organizationInTime), 'minute')) clockInRemark = 'On Time';
+        else if (moment(clockInActionTime).isAfter(moment(organizationInTime))) clockInRemark = 'Late';
+        else if (moment(clockInActionTime).isBefore(moment(organizationInTime))) clockInRemark = 'Early Login';
+
+        let clockOutActionTime = null, clockOutRemark = null, duration = 0, totalHours = 0, extraHours = 0;
+        let calculatedFinalRemark = 'Clocked In';
+
+        if (outTime) {
+          const effectiveOutDate = outDate || inDate;
+          const outTimeFormat = outTime.includes('AM') || outTime.includes('PM') ? 'hh:mm A' : 'HH:mm';
+          clockOutActionTime = moment.tz(`${effectiveOutDate} ${outTime}`, `YYYY-MM-DD ${outTimeFormat}`, 'Asia/Kolkata').utc().toDate();
+          const durationMs = clockOutActionTime - clockInActionTime;
+          duration = Math.max(0.01, parseFloat((durationMs / (1000 * 60 * 60)).toFixed(2)));
+          totalHours = duration;
+
+          clockOutRemark = 'Present';
+          if (moment(clockOutActionTime).isSame(moment(organizationOutTime), 'minute')) clockOutRemark = 'On Time';
+          else if (moment(clockOutActionTime).isBefore(moment(organizationOutTime))) clockOutRemark = 'Left Early';
+
+          const expectedHours = moment(organizationOutTime).diff(moment(organizationInTime)) / (1000 * 60 * 60);
+          if (expectedHours > 0 && totalHours > expectedHours) extraHours = parseFloat((totalHours - expectedHours).toFixed(2));
+
+          const halfShiftHours = expectedHours > 0 ? expectedHours / 2 : 4;
+          const isLate = clockInRemark === 'Late';
+          const isEarlyLogout = clockOutRemark === 'Left Early';
+          if (totalHours < halfShiftHours) calculatedFinalRemark = 'Half Day';
+          else if (isLate && isEarlyLogout) calculatedFinalRemark = 'Late & Left Early';
+          else if (isLate) calculatedFinalRemark = 'Late';
+          else if (isEarlyLogout) calculatedFinalRemark = 'Left Early';
+          else if (clockInRemark === 'Early Login') calculatedFinalRemark = 'Early Login';
+          else calculatedFinalRemark = 'On Time';
+        }
+
+        const finalRemarkToSave = (customRemark && customRemark !== 'Auto')
+          ? customRemark
+          : (outTime ? calculatedFinalRemark : 'Clocked In');
+
+        if (!existingAttendance) {
+          await prisma.attendance.create({
+            data: {
+              employeeId: employee.id,
+              employeeName: employee.employeeName,
+              organizationCode: employee.organizationCode,
+              date: clockInActionTime,
+              finalRemark: finalRemarkToSave,
+              totalHours, extraHours,
+              sessions: {
+                create: {
+                  clockInTime: clockInActionTime, clockInRemark,
+                  clockOutTime: clockOutActionTime, clockOutRemark, duration
+                }
+              }
+            }
+          });
+        } else {
+          const targetSession = existingAttendance.sessions?.[0] || null;
+          await prisma.attendance.update({
+            where: { id: existingAttendance.id },
+            data: {
+              totalHours, extraHours, finalRemark: finalRemarkToSave,
+              sessions: targetSession ? {
+                update: {
+                  where: { id: targetSession.id },
+                  data: { clockInTime: clockInActionTime, clockInRemark, clockOutTime: clockOutActionTime, clockOutRemark, duration }
+                }
+              } : {
+                create: { clockInTime: clockInActionTime, clockInRemark, clockOutTime: clockOutActionTime, clockOutRemark, duration }
+              }
+            }
+          });
+        }
+
+        results.push({ employeeName, status: 'success', finalRemark: finalRemarkToSave, totalHours });
+      } catch (rowError) {
+        results.push({ employeeName, status: 'error', message: rowError.message });
+      }
+    }
+
+    const successCount = results.filter(r => r.status === 'success').length;
+    const errorCount = results.filter(r => r.status === 'error').length;
+
+    res.status(200).send({
+      message: `Bulk upload complete: ${successCount} succeeded, ${errorCount} failed.`,
+      successCount,
+      errorCount,
+      results
+    });
+  } catch (error) {
+    console.error('Error in bulk attendance upload:', error);
+    res.status(500).send({ message: 'Server error', error: error.message });
+  }
+});
+
 router.get('/employees/:employeeId/attendance-by-date', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
   // #swagger.tags = ['All Company']
   try {
