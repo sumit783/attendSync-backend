@@ -1554,38 +1554,148 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
   }
 });
 
-router.post('/employees/:employeeId/manual-attendance', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
-    // #swagger.tags = ['All Company']
-
+router.get('/employees/:employeeId/attendance-by-date', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+  // #swagger.tags = ['All Company']
   try {
     const { employeeId } = req.params;
-    const { inDate, inTime, outDate, outTime } = req.body;
+    const { date } = req.query;
     const organizationId = req.organizationId;
 
-    if (!inDate || !inTime) {
-      return res.status(400).send({ message: 'Missing required fields: inDate, inTime' });
+    if (!date) {
+      return res.status(400).send({ message: 'Date query parameter is required (YYYY-MM-DD).' });
     }
 
-    const organization = await prisma.organization.findUnique({
+    const organization = req.targetOrganization || await prisma.organization.findUnique({
       where: { id: organizationId }
     });
-
     if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
-    const employee = await prisma.employee.findFirst({
-      where: { id: employeeId, organizationCode: organization.organizationCode },
-      include: { shift: true }
+    const dayStart = moment.tz(`${date} 00:00:00`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata').utc().toDate();
+    const dayEnd = moment.tz(`${date} 23:59:59`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata').utc().toDate();
+
+    const [employee, attendanceRecord] = await Promise.all([
+      prisma.employee.findUnique({
+        where: { id: employeeId },
+        include: { shift: true }
+      }),
+      prisma.attendance.findFirst({
+        where: {
+          employeeId,
+          date: { gte: dayStart, lte: dayEnd }
+        },
+        include: {
+          sessions: {
+            orderBy: { clockInTime: 'asc' }
+          }
+        }
+      })
+    ]);
+
+    if (!employee || (employee.organizationCode !== organization.organizationCode)) {
+      return res.status(404).send({ message: 'Employee not found' });
+    }
+
+    res.status(200).send({
+      attendance: attendanceRecord,
+      shift: employee.shift || null,
+      organizationTimes: {
+        inTime: organization.inTime,
+        outTime: organization.outTime
+      }
     });
+  } catch (error) {
+    console.error('Error fetching employee attendance by date:', error);
+    res.status(500).send({ message: 'Server error', error: error.message });
+  }
+});
 
-    if (!employee) return res.status(404).send({ message: 'Employee not found' });
+router.post('/employees/:employeeId/manual-attendance', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['All Company']
+  try {
+    const { employeeId } = req.params;
+    const { inDate, inTime, outDate, outTime, finalRemark: customRemark } = req.body;
+    const organizationId = req.organizationId;
 
-    // Parse the actual clock-in action time
-    const timeFormat = inTime.includes('AM') || inTime.includes('PM') ? 'hh:mm A' : 'HH:mm';
-    const clockInActionTime = moment.tz(`${inDate} ${inTime}`, `YYYY-MM-DD ${timeFormat}`, 'Asia/Kolkata').utc().toDate();
+    if (!inDate) {
+      return res.status(400).send({ message: 'Missing required field: inDate' });
+    }
 
-    // Determine Expected Times (based on the inDate logic day)
-    const expectedInTimeStr = employee.shift ? employee.shift.startTime : organization.inTime;
-    const expectedOutTimeStr = employee.shift ? employee.shift.endTime : organization.outTime;
+    const organization = req.targetOrganization || await prisma.organization.findUnique({
+      where: { id: organizationId }
+    });
+    if (!organization) return res.status(404).send({ message: 'Organization not found' });
+
+    const dayStart = moment.tz(`${inDate} 00:00:00`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata').utc().toDate();
+    const dayEnd = moment.tz(`${inDate} 23:59:59`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata').utc().toDate();
+
+    // Fetch employee and attendance concurrently in 1 DB round trip
+    const [employee, attendanceRecord] = await Promise.all([
+      prisma.employee.findUnique({
+        where: { id: employeeId },
+        include: { shift: true }
+      }),
+      prisma.attendance.findFirst({
+        where: {
+          employeeId,
+          date: { gte: dayStart, lte: dayEnd }
+        },
+        include: { sessions: true }
+      })
+    ]);
+
+    if (!employee || (employee.organizationCode !== organization.organizationCode)) {
+      return res.status(404).send({ message: 'Employee not found' });
+    }
+
+    // Case 1: Marking as Absent or On Leave (no inTime or remark is Absent/On Leave)
+    if ((!inTime || customRemark === 'Absent' || customRemark === 'On Leave') && !outTime) {
+      const targetRemark = customRemark || 'Absent';
+      if (!attendanceRecord) {
+        const created = await prisma.attendance.create({
+          data: {
+            employeeId: employee.id,
+            employeeName: employee.employeeName,
+            organizationCode: employee.organizationCode,
+            date: dayStart,
+            finalRemark: targetRemark,
+            totalHours: 0,
+            extraHours: 0
+          },
+          include: { sessions: true }
+        });
+        return res.status(200).send({
+          message: `Attendance marked as ${targetRemark} successfully.`,
+          attendance: created
+        });
+      } else {
+        const [_, updated] = await prisma.$transaction([
+          prisma.session.deleteMany({
+            where: { attendanceId: attendanceRecord.id }
+          }),
+          prisma.attendance.update({
+            where: { id: attendanceRecord.id },
+            data: {
+              finalRemark: targetRemark,
+              totalHours: 0,
+              extraHours: 0
+            },
+            include: { sessions: true }
+          })
+        ]);
+        return res.status(200).send({
+          message: `Attendance marked as ${targetRemark} successfully.`,
+          attendance: updated
+        });
+      }
+    }
+
+    if (!inTime) {
+      return res.status(400).send({ message: 'In time is required when clocking in.' });
+    }
+
+    // Determine Expected Times (pure in-memory logic)
+    const expectedInTimeStr = employee.shift ? employee.shift.startTime : (organization.inTime || '09:00');
+    const expectedOutTimeStr = employee.shift ? employee.shift.endTime : (organization.outTime || '18:00');
     const orgInFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
     const orgOutFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
 
@@ -1597,22 +1707,10 @@ router.post('/employees/:employeeId/manual-attendance', authenticateAdmin, requi
     }
     const organizationOutTime = organizationOutTimeMom.utc().toDate();
 
-    // Check if attendance record exists for this specific logical day (inDate)
-    const dayStart = moment.tz(`${inDate} 00:00:00`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata').utc().toDate();
-    const dayEnd = moment.tz(`${inDate} 23:59:59`, 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata').utc().toDate();
+    // Parse the actual clock-in action time
+    const timeFormat = inTime.includes('AM') || inTime.includes('PM') ? 'hh:mm A' : 'HH:mm';
+    const clockInActionTime = moment.tz(`${inDate} ${inTime}`, `YYYY-MM-DD ${timeFormat}`, 'Asia/Kolkata').utc().toDate();
 
-    let attendanceRecord = await prisma.attendance.findFirst({
-      where: {
-        employeeId: employee.id,
-        date: {
-          gte: dayStart,
-          lte: dayEnd
-        }
-      },
-      include: { sessions: true }
-    });
-
-    // 1. Process Clock In
     let clockInRemark = 'Present';
     if (moment(clockInActionTime).isSame(moment(organizationInTime), 'minute')) {
       clockInRemark = 'On Time';
@@ -1622,111 +1720,126 @@ router.post('/employees/:employeeId/manual-attendance', authenticateAdmin, requi
       clockInRemark = 'Early Login';
     }
 
-    if (!attendanceRecord) {
-      attendanceRecord = await prisma.attendance.create({
-        data: {
-          employeeId: employee.id,
-          employeeName: employee.employeeName,
-          organizationCode: employee.organizationCode,
-          date: clockInActionTime,
-          finalRemark: 'Clocked In',
-          sessions: {
-            create: {
-              clockInTime: clockInActionTime,
-              clockInRemark
-            }
-          }
-        },
-        include: { sessions: true }
-      });
-    } else {
-      // Overwrite the existing first session or create one if none exists
-      if (attendanceRecord.sessions && attendanceRecord.sessions.length > 0) {
-        await prisma.session.update({
-          where: { id: attendanceRecord.sessions[0].id },
-          data: { clockInTime: clockInActionTime, clockInRemark }
-        });
-      } else {
-        await prisma.session.create({
-          data: {
-            attendanceId: attendanceRecord.id,
-            clockInTime: clockInActionTime,
-            clockInRemark
-          }
-        });
-      }
-    }
+    // Handle Clock Out if outTime is present
+    let clockOutActionTime = null;
+    let clockOutRemark = null;
+    let duration = 0;
+    let totalHours = 0;
+    let extraHours = 0;
+    let calculatedFinalRemark = 'Clocked In';
 
-    // Refresh sessions
-    attendanceRecord = await prisma.attendance.findUnique({
-      where: { id: attendanceRecord.id },
-      include: { sessions: true }
-    });
-
-    // 2. Process Clock Out (if provided)
-    if (outDate && outTime) {
+    if (outTime) {
+      const effectiveOutDate = outDate || inDate;
       const outTimeFormat = outTime.includes('AM') || outTime.includes('PM') ? 'hh:mm A' : 'HH:mm';
-      const clockOutActionTime = moment.tz(`${outDate} ${outTime}`, `YYYY-MM-DD ${outTimeFormat}`, 'Asia/Kolkata').utc().toDate();
+      clockOutActionTime = moment.tz(`${effectiveOutDate} ${outTime}`, `YYYY-MM-DD ${outTimeFormat}`, 'Asia/Kolkata').utc().toDate();
 
-      const targetSession = attendanceRecord.sessions[0];
-      
-      const duration = Math.max(0.01, ((clockOutActionTime - targetSession.clockInTime) / (1000 * 60 * 60)).toFixed(2));
-      let clockOutRemark = 'Present';
+      const durationMs = clockOutActionTime - clockInActionTime;
+      duration = Math.max(0.01, parseFloat((durationMs / (1000 * 60 * 60)).toFixed(2)));
+      totalHours = duration;
+
+      clockOutRemark = 'Present';
       if (moment(clockOutActionTime).isSame(moment(organizationOutTime), 'minute')) {
         clockOutRemark = 'On Time';
       } else if (moment(clockOutActionTime).isBefore(moment(organizationOutTime))) {
         clockOutRemark = 'Left Early';
       }
 
-      await prisma.session.update({
-        where: { id: targetSession.id },
-        data: {
-          clockOutTime: clockOutActionTime,
-          duration,
-          clockOutRemark
-        }
-      });
-
-      const updatedSessions = await prisma.session.findMany({ where: { attendanceId: attendanceRecord.id } });
-      const totalHours = updatedSessions.reduce((acc, s) => acc + (s.duration || 0), 0);
-      
       const expectedDurationMs = moment(organizationOutTime).diff(moment(organizationInTime));
       const expectedHours = expectedDurationMs > 0 ? expectedDurationMs / (1000 * 60 * 60) : 0;
-      let extraHours = 0;
       if (expectedHours > 0 && totalHours > expectedHours) {
         extraHours = parseFloat((totalHours - expectedHours).toFixed(2));
       }
-      
-      const halfShiftHours = expectedHours > 0 ? (expectedHours / 2) : 4;
 
-      const firstSession = updatedSessions[0];
-      const isLate = firstSession?.clockInRemark === 'Late';
+      const halfShiftHours = expectedHours > 0 ? (expectedHours / 2) : 4;
+      const isLate = clockInRemark === 'Late';
       const isEarlyLogout = clockOutRemark === 'Left Early';
 
-      let finalRemark = 'Present';
       if (totalHours < halfShiftHours) {
-        finalRemark = 'Half Day';
+        calculatedFinalRemark = 'Half Day';
       } else if (isLate && isEarlyLogout) {
-        finalRemark = 'Late & Left Early';
+        calculatedFinalRemark = 'Late & Left Early';
       } else if (isLate) {
-        finalRemark = 'Late';
+        calculatedFinalRemark = 'Late';
       } else if (isEarlyLogout) {
-        finalRemark = 'Left Early';
-      } else if (firstSession?.clockInRemark === 'Early Login') {
-        finalRemark = 'Early Login';
+        calculatedFinalRemark = 'Left Early';
+      } else if (clockInRemark === 'Early Login') {
+        calculatedFinalRemark = 'Early Login';
       } else {
-        finalRemark = 'On Time';
+        calculatedFinalRemark = 'On Time';
       }
-
-      await prisma.attendance.update({
-        where: { id: attendanceRecord.id },
-        data: { totalHours, extraHours, finalRemark }
-      });
-
-      return res.status(200).send({ message: 'Clocked in and out successfully (Manual).', totalHours, extraHours, finalRemark });
-    } else {
-      return res.status(200).send({ message: 'Clocked in successfully (Manual).' });
     }
+
+    const finalRemarkToSave = (customRemark && customRemark !== 'Auto')
+      ? customRemark
+      : (outTime ? calculatedFinalRemark : 'Clocked In');
+
+    let resultAttendance;
+
+    if (!attendanceRecord) {
+      // Create Attendance + Session in 1 DB operation!
+      resultAttendance = await prisma.attendance.create({
+        data: {
+          employeeId: employee.id,
+          employeeName: employee.employeeName,
+          organizationCode: employee.organizationCode,
+          date: clockInActionTime,
+          finalRemark: finalRemarkToSave,
+          totalHours,
+          extraHours,
+          sessions: {
+            create: {
+              clockInTime: clockInActionTime,
+              clockInRemark,
+              clockOutTime: clockOutActionTime,
+              clockOutRemark,
+              duration
+            }
+          }
+        },
+        include: { sessions: true }
+      });
+    } else {
+      // Update Attendance + Session in 1 DB operation!
+      const targetSession = attendanceRecord.sessions && attendanceRecord.sessions.length > 0 ? attendanceRecord.sessions[0] : null;
+
+      resultAttendance = await prisma.attendance.update({
+        where: { id: attendanceRecord.id },
+        data: {
+          totalHours,
+          extraHours,
+          finalRemark: finalRemarkToSave,
+          sessions: targetSession ? {
+            update: {
+              where: { id: targetSession.id },
+              data: {
+                clockInTime: clockInActionTime,
+                clockInRemark,
+                clockOutTime: clockOutActionTime,
+                clockOutRemark,
+                duration
+              }
+            }
+          } : {
+            create: {
+              clockInTime: clockInActionTime,
+              clockInRemark,
+              clockOutTime: clockOutActionTime,
+              clockOutRemark,
+              duration
+            }
+          }
+        },
+        include: { sessions: true }
+      });
+    }
+
+    return res.status(200).send({
+      message: outTime ? 'Attendance recorded and updated successfully.' : 'Attendance clocked in / updated successfully.',
+      totalHours,
+      extraHours,
+      finalRemark: finalRemarkToSave,
+      attendance: resultAttendance
+    });
   } catch (error) {
     console.error('Error in manual attendance:', error);
     res.status(500).send({ message: 'Server error', error: error.message });

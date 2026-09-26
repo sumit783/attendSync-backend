@@ -15,7 +15,9 @@ const requireOrganizationAccess = async (req, res, next) => {
 
     try {
         // 1. Direct Access Check
-        let hasAccess = req.adminRoles && req.adminRoles.some(role => role.organizationId === targetOrganizationId);
+        const directRole = req.adminRoles && req.adminRoles.find(role => role.organizationId === targetOrganizationId);
+        let hasAccess = !!directRole;
+        let targetOrg = directRole?.organization || null;
 
         // 2. Hierarchical (Super Admin) Access Check
         if (!hasAccess && req.adminRoles) {
@@ -26,7 +28,7 @@ const requireOrganizationAccess = async (req, res, next) => {
 
             if (superAdminOrgs.length > 0) {
                 // Check if the target organization's parentId is in superAdminOrgs
-                const targetOrg = await prisma.organization.findUnique({ where: { id: targetOrganizationId } });
+                targetOrg = await prisma.organization.findUnique({ where: { id: targetOrganizationId } });
                 if (targetOrg && targetOrg.parentId && superAdminOrgs.includes(targetOrg.parentId)) {
                     hasAccess = true;
                 }
@@ -45,7 +47,9 @@ const requireOrganizationAccess = async (req, res, next) => {
 
              if (!role) {
                  // Fallback check for global super admin or parentId
-                 const targetOrg = await prisma.organization.findUnique({ where: { id: targetOrganizationId } });
+                 if (!targetOrg) {
+                     targetOrg = await prisma.organization.findUnique({ where: { id: targetOrganizationId } });
+                 }
                  
                  const superRole = await prisma.adminRole.findFirst({
                      where: {
@@ -61,6 +65,7 @@ const requireOrganizationAccess = async (req, res, next) => {
                  if (superRole) {
                      req.organizationId = targetOrganizationId;
                      req.organizationCode = targetOrg ? targetOrg.organizationCode : null;
+                     req.targetOrganization = targetOrg || null;
                      return next();
                  }
                  
@@ -69,12 +74,14 @@ const requireOrganizationAccess = async (req, res, next) => {
              
              req.organizationId = targetOrganizationId;
              req.organizationCode = role.organization.organizationCode;
+             req.targetOrganization = role.organization;
         } else {
              // We have access either directly or hierarchically
-             const org = await prisma.organization.findUnique({ where: { id: targetOrganizationId }});
+             const org = targetOrg || await prisma.organization.findUnique({ where: { id: targetOrganizationId }});
              if (!org) return res.status(404).send({ message: 'Organization not found.' });
              req.organizationCode = org.organizationCode;
              req.organizationId = targetOrganizationId;
+             req.targetOrganization = org;
         }
 
         next();
