@@ -410,33 +410,49 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
             lateDates: [],
             earlyLoginDates: [],
             onTimeDates: [],
+            halfDayDates: [],
+            leftEarlyDates: [],
+            lateAndLeftEarlyDates: [],
             absentDates: [],
-            leaveDates: [],
+            leaveDates: Array.from(leaveDates),
             holidayDates: Array.from(holidayDatesSet),
             holidayDetails: holidayDetails,
             regularizedDates: [],
-            pendingRegularizeDates: [],
-            weekOffDays: employee.shift && employee.shift.weekOffs ? employee.shift.weekOffs.split(',') : []
+            pendingRegularizeDates: Array.from(pendingRegularizeSet),
+            weekOffDays: employee.shift && employee.shift.weekOffs ? employee.shift.weekOffs.split(',').map(s => s.trim()) : []
         };
+
+        const PRESENT_LIKE_REMARKS = [
+            'Present', 'Half Day', 'Left Early', 'Late & Left Early', 
+            'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time'
+        ];
 
         allDates.forEach(date => {
             const att = attendanceMap[date];
             if (pendingRegularizeSet.has(date)) {
                 result.pendingRegularizeDates.push(date);
-            } else if (att && ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'].includes(att.finalRemark)) {
+            } else if (att && (PRESENT_LIKE_REMARKS.includes(att.finalRemark) || (att.finalRemark && att.finalRemark !== 'Absent'))) {
                 if (att.finalRemark === 'Regularized') {
                     result.regularizedDates.push(date);
-                } else if (att.remark === 'Late') {
+                } else if (att.finalRemark === 'Half Day') {
+                    result.halfDayDates.push(date);
+                } else if (att.finalRemark === 'Late & Left Early') {
+                    result.lateAndLeftEarlyDates.push(date);
                     result.lateDates.push(date);
-                } else if (att.remark === 'Early Login') {
+                    result.leftEarlyDates.push(date);
+                } else if (att.finalRemark === 'Left Early') {
+                    result.leftEarlyDates.push(date);
+                } else if (att.finalRemark === 'Early Login' || att.remark === 'Early Login') {
                     result.earlyLoginDates.push(date);
-                } else if (att.remark === 'On Time') {
+                } else if (att.finalRemark === 'Late' || att.remark === 'Late') {
+                    result.lateDates.push(date);
+                } else if (att.finalRemark === 'On Time' || att.remark === 'On Time') {
                     result.onTimeDates.push(date);
                 } else {
                     result.presentDates.push(date);
                 }
             } else if (leaveDates.has(date)) {
-                result.leaveDates.push(date);
+                // Already in leaveDates
             } else if (holidayDatesSet.has(date)) {
                 // Do not mark as absent if it is a holiday
             } else {
@@ -505,7 +521,7 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
         let actualWorkingDays = 0;
         let completedWorkingHours = 0;
 
-        const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'];
+        const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Late & Left Early', 'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time'];
         for (const a of attendances) {
             if (PRESENT_REMARKS.includes(a.finalRemark)) {
                 if (moment(a.date).isSameOrBefore(today, 'day')) {
@@ -1433,7 +1449,7 @@ router.get('/performance-report', authenticateJWT, async (req, res) => {
       m.add(1, 'month');
     }
 
-    const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'];
+    const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Late & Left Early', 'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time'];
     let totalHoursAll = 0;
     let totalOvertimeAll = 0;
     let lateArrivals = 0;
