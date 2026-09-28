@@ -86,37 +86,58 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
                             await prisma.employeeDevice.delete({ where: { id: employee.devices[0].id } });
                         }
                     } else {
-                        await prisma.employeeDevice.update({
-                            where: { id: employee.devices[0].id },
-                            data: { uuid: deviceId }
+                        await prisma.employeeDevice.upsert({
+                            where: { uuid: deviceId },
+                            update: { employeeId: employee.id, status: 'ACTIVE' },
+                            create: {
+                                employeeId: employee.id,
+                                uuid: deviceId,
+                                model: isIOS ? 'iOS Device' : 'Device',
+                                status: 'ACTIVE'
+                            }
                         });
                     }
                 } else {
-                    return res.status(403).json({ message: 'Device not registered or revoked. Please contact administrator.' });
+                    const matchingEmployeeDevice = await prisma.employeeDevice.findFirst({
+                        where: { employeeId: employee.id, uuid: deviceId, status: 'ACTIVE' }
+                    });
+                    if (!matchingEmployeeDevice) {
+                        return res.status(403).json({ message: 'Device not registered or revoked. Please contact administrator.' });
+                    }
                 }
             }
         }
 
         const organization = employee.organization;
 
-        // ✅ Check WiFi (Skip for iOS, rely on GPS)
-        if (!isIOS) {
-            if (organization?.wifiSSID && organization.wifiSSID !== wifiSSID) {
-                return res.status(400).json({ message: `Wrong Wi-Fi. Please connect to ${organization.wifiSSID}.` });
+        const cleanStr = (s) => (s ? String(s).replace(/^["']|["']$/g, '').trim().toLowerCase() : '');
+
+        // ✅ Check WiFi (Skip for iOS / Web fallback, rely on GPS)
+        if (!isIOS && deviceId !== 'web-fallback-id') {
+            if (organization?.wifiSSID && wifiSSID && wifiSSID !== 'Unavailable (Web/No Permission)' && wifiSSID !== 'Not Connected') {
+                if (cleanStr(organization.wifiSSID) !== cleanStr(wifiSSID)) {
+                    return res.status(400).json({ message: `Wrong Wi-Fi. Please connect to ${organization.wifiSSID}.` });
+                }
             }
-            if (organization?.wifiBSSID && wifiBSSID && wifiBSSID !== '02:00:00:00:00:00' && organization.wifiBSSID.toLowerCase() !== wifiBSSID.toLowerCase()) {
+            if (organization?.wifiBSSID && wifiBSSID && wifiBSSID !== '02:00:00:00:00:00' && cleanStr(organization.wifiBSSID) !== cleanStr(wifiBSSID)) {
                 return res.status(400).json({ message: `Wi-Fi BSSID mismatch. Expected: ${organization.wifiBSSID}, Got: ${wifiBSSID}` });
             }
         }
 
         // ✅ GPS Check
-        if (employeeLatitude && employeeLongitude && organization?.latitude && organization?.longitude && organization?.radius) {
+        const hasValidCoords = Boolean(
+            employeeLatitude && employeeLongitude &&
+            !isNaN(parseFloat(employeeLatitude)) && !isNaN(parseFloat(employeeLongitude)) &&
+            parseFloat(employeeLatitude) !== 0 && parseFloat(employeeLongitude) !== 0
+        );
+
+        if (hasValidCoords && organization?.latitude && organization?.longitude && organization?.radius) {
             const distance = haversineDistance(
-                { latitude: employeeLatitude, longitude: employeeLongitude },
-                { latitude: organization.latitude, longitude: organization.longitude }
+                { latitude: parseFloat(employeeLatitude), longitude: parseFloat(employeeLongitude) },
+                { latitude: parseFloat(organization.latitude), longitude: parseFloat(organization.longitude) }
             );
             if (distance > organization.radius) {
-                return res.status(400).json({ message: 'You are outside the allowed radius for clock-in/out.' });
+                return res.status(400).json({ message: `You are outside the allowed radius for clock-in/out (${Math.round(distance)}m > ${organization.radius}m).` });
             }
         }
 
