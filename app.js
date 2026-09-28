@@ -20,9 +20,22 @@ const leavesRoutes = require('./routes/leaveRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const orgNotificationRoutes = require('./routes/organizationNotification');
 const regularizationRoutes = require('./routes/regularizationRoutes');
+const departmentRoutes = require('./routes/departmentRoutes');
+const designationRoutes = require('./routes/designationRoutes');
+const customRoleRoutes = require('./routes/customRoleRoutes');
+const taskAdminRoutes = require('./routes/taskAdminRoutes');
+const taskEmployeeRoutes = require('./routes/taskEmployeeRoutes');
+const holidayRoutes = require('./routes/holidayRoutes');
+const announcementRoutes = require('./routes/announcementRoutes');
+const supportRoutes = require('./routes/supportRoutes');
+const superAdminRoutes = require('./routes/superAdminRoutes');
+const groupDashboardRoutes = require('./routes/groupDashboardRoutes');
+const reportRoutes = require('./routes/reportRoutes');
+const analyticsRoutes = require('./routes/analyticsRoutes');
+const dashboardRoutes = require('./routes/dashboardRoutes');
 // const AbsenceMarker = require('./Handlers/AbsenceHandlers');
 // Import the cron jobs so they start running
-require('./Handlers/cronJobs'); // ✅ This will execute and schedule your cron jobs
+require('./Handlers/cronJobs'); // This will execute and schedule your cron jobs
 
 process.env.TZ = "Asia/Kolkata";
 
@@ -30,7 +43,19 @@ const app = express();
 connectDB();
 
 // Set security HTTP headers
-app.use(helmet());
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+  crossOriginOpenerPolicy: false,
+  contentSecurityPolicy: process.env.NODE_ENV === 'development' ? false : {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+      "style-src": ["'self'", "'unsafe-inline'"],
+      "img-src": ["'self'", "data:", "validator.swagger.io"],
+      "upgrade-insecure-requests": [],
+    },
+  },
+}));
 
 // Logging
 if (process.env.NODE_ENV === 'development') {
@@ -67,7 +92,7 @@ app.use('/api/', limiter);
 
 // Middleware for parsing JSON requests
 app.use(express.json({
-  limit: '10kb',
+  limit: '50mb',
   verify: (req, res, buf) => {
     try {
       JSON.parse(buf);
@@ -86,12 +111,26 @@ app.use(hpp());
 // Compress responses
 app.use(compression());
 
+const activityLoggerMiddleware = require('./middleware/activityLogger');
+
+// Set Cache-Control headers for API routes
+app.use('/api', (req, res, next) => {
+  // Prevent shared CDNs from caching, but allow browser ETag revalidation
+  res.setHeader('Cache-Control', 'private, no-cache, must-revalidate');
+  next();
+});
+
+// Activity Logger for all POST / PUT / PATCH / DELETE routes
+app.use('/api', activityLoggerMiddleware);
+
 // AbsenceMarker();
 
 // Routes
 app.use('/api/organization', organizationAuth);
 app.use('/api/organization', organizationProfile);
 app.use('/api/organization', organizationManagement);
+app.use('/api/organization/analytics', analyticsRoutes);
+app.use('/api/organization/dashboard', dashboardRoutes);
 app.use('/api/organization/shifts', shiftManagement);
 app.use('/api/employee', employeeManagement);
 app.use('/api/employee', employeeAuth);
@@ -99,8 +138,22 @@ app.use('/api/leave', leavesRoutes);
 app.use('/api/notification', notificationRoutes);
 app.use('/api/notification', orgNotificationRoutes);
 app.use('/api/regularization', regularizationRoutes);
-
+app.use('/api/departments', departmentRoutes);
+app.use('/api/designations', designationRoutes);
+app.use('/api/organization/custom-roles', customRoleRoutes);
+app.use('/api/organization/tasks', taskAdminRoutes);
+app.use('/api/organization/holidays', holidayRoutes);
+app.use('/api/employee/tasks', taskEmployeeRoutes);
+app.use('/api/announcements', announcementRoutes);
+app.use('/api/organization', supportRoutes);
+app.use('/api/superadmin', superAdminRoutes);
+app.use('/api/group', groupDashboardRoutes);
+app.use('/api/reports', reportRoutes);
 app.use('/api/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Setup Swagger UI
+const setupSwagger = require('./config/swagger');
+setupSwagger(app);
 
 app.get('/', (req, res) => {
   res.send('Maybe You are not meant to be here..');

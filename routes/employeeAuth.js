@@ -11,6 +11,8 @@ const generateOTP = () => {
 };
 
 router.post('/signup', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { employeeName, employeeEmail, password, confirmPassword, organizationCode } = req.body;
 
@@ -82,6 +84,8 @@ router.post('/signup', async (req, res) => {
 });
 
 router.post('/login', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { email, password, deviceId, deviceModel, manufacturer, platform, osVersion } = req.body;
 
@@ -91,9 +95,12 @@ router.post('/login', async (req, res) => {
         let user = employee;
 
         if (!user) {
-            const org = await prisma.organization.findUnique({ where: { organizationEmail: email } });
-            if (org) {
-                user = org;
+            const admin = await prisma.admin.findUnique({
+                where: { email },
+                include: { AdminRole: { include: { Organization: true } } }
+            });
+            if (admin) {
+                user = admin;
                 userType = 'Organization';
             }
         }
@@ -166,15 +173,17 @@ router.post('/login', async (req, res) => {
             }
         }
 
-        const token = jwt.sign({ id: user.id, email: user.employeeEmail || user.organizationEmail }, process.env.JWT_SECRET);
+        const token = jwt.sign({ id: user.id, email: user.employeeEmail || user.email }, process.env.JWT_SECRET);
+
+        const orgObj = userType === 'Employee' ? user.organization : (user.AdminRole?.[0]?.Organization || null);
 
         res.status(200).send({
             message: `${userType} login successful`,
             id: user.id,
             token,
-            organizationCode: user.organizationCode || null,
+            organizationCode: user.organizationCode || (orgObj?.organizationCode) || null,
             employee: userType === 'Employee' ? user : undefined,
-            organization: userType === 'Organization' ? user : undefined
+            organization: userType === 'Organization' ? orgObj : undefined
         });
     } catch(err) {
         console.error('Error in login:', err);
@@ -183,17 +192,19 @@ router.post('/login', async (req, res) => {
 });
 
 router.post('/verify-otp', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { email, otp, action } = req.body;
 
         const employee = await prisma.employee.findUnique({ where: { employeeEmail: email } });
-        const org = await prisma.organization.findUnique({ where: { organizationEmail: email } });
+        const admin = await prisma.admin.findUnique({ where: { email } });
 
-        const user = employee || org;
+        const user = employee || admin;
 
         if (!user) return res.status(400).send({ message: 'User not found' });
 
-        if (user.otp !== otp || user.otpExpires < new Date()) {
+        if (user.otp !== otp || !user.otpExpires || user.otpExpires < new Date()) {
             return res.status(400).send({ message: 'Invalid or expired OTP.' });
         }
 
@@ -204,12 +215,14 @@ router.post('/verify-otp', async (req, res) => {
                     data: { isVerified: true, otp: null, otpExpires: null }
                 });
                 
-                await prisma.organization.update({
-                    where: { id: user.organizationId },
-                    data: { employeeCount: { increment: 1 } }
-                });
+                if (user.organizationId) {
+                    await prisma.organization.update({
+                        where: { id: user.organizationId },
+                        data: { employeeCount: { increment: 1 } }
+                    });
+                }
             } else {
-                await prisma.organization.update({
+                await prisma.admin.update({
                     where: { id: user.id },
                     data: { isVerified: true, otp: null, otpExpires: null }
                 });
@@ -231,6 +244,8 @@ router.post('/verify-otp', async (req, res) => {
 
 
 router.post('/forgot-password', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { email } = req.body;
         const user = await prisma.employee.findUnique({ where: { employeeEmail: email } });
@@ -252,6 +267,8 @@ router.post('/forgot-password', async (req, res) => {
 });
 
 router.post('/reset-password', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { email, otp, newPassword } = req.body;
         const user = await prisma.employee.findUnique({ where: { employeeEmail: email } });
@@ -274,6 +291,8 @@ router.post('/reset-password', async (req, res) => {
 });
 
 router.post('/change-organization', async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const { employeeId, newOrganizationCode } = req.body;
         

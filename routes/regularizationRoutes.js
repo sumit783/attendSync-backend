@@ -2,15 +2,19 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma/client');
 const authenticateJWT = require('../middleware/authenticateJWT');
+const authenticateAdmin = require('../middleware/authenticateAdmin');
+const requireOrganizationAccess = require('../middleware/requireOrganizationAccess');
 const router = express.Router();
 
 // ================== Employee: Submit Regularization Request ==================
 router.post('/employee', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-        const { attendanceDate, requestType, requestedCheckIn, requestedCheckOut, reason, attachment } = req.body;
+        const { attendanceDate, requestType, requestedCheckIn, requestedCheckOut, requestedCheckInDate, requestedCheckOutDate, reason, attachment } = req.body;
 
         if (!attendanceDate || !requestType || !reason) {
             return res.status(400).send({ message: 'Attendance date, request type, and reason are required.' });
@@ -45,6 +49,8 @@ router.post('/employee', authenticateJWT, async (req, res) => {
                 requestType,
                 requestedCheckIn,
                 requestedCheckOut,
+                requestedCheckInDate: requestedCheckInDate ? new Date(requestedCheckInDate) : null,
+                requestedCheckOutDate: requestedCheckOutDate ? new Date(requestedCheckOutDate) : null,
                 reason,
                 attachment
             }
@@ -59,6 +65,8 @@ router.post('/employee', authenticateJWT, async (req, res) => {
 
 // ================== Employee: Get My Regularization Requests ==================
 router.get('/employee', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -76,12 +84,11 @@ router.get('/employee', authenticateJWT, async (req, res) => {
 });
 
 // ================== Admin: Get All Regularization Requests ==================
-router.get('/admin', authenticateJWT, async (req, res) => {
-    try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+router.get('/admin', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
 
-        const organization = await prisma.organization.findUnique({ where: { id: decoded.id } });
+    try {
+        const organization = await prisma.organization.findUnique({ where: { id: req.organizationId } });
         if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
         const requests = await prisma.attendanceRegularization.findMany({
@@ -101,13 +108,14 @@ router.get('/admin', authenticateJWT, async (req, res) => {
     }
 });
 
-// ================== Admin: Approve Regularization Request ==================
-router.put('/admin/:id/approve', authenticateJWT, async (req, res) => {
-    try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+const moment = require('moment-timezone');
 
-        const organization = await prisma.organization.findUnique({ where: { id: decoded.id } });
+// ================== Admin: Approve Regularization Request ==================
+router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
+    try {
+        const organization = await prisma.organization.findUnique({ where: { id: req.organizationId } });
         if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
         const requestId = req.params.id;
@@ -128,25 +136,69 @@ router.put('/admin/:id/approve', authenticateJWT, async (req, res) => {
             }
         });
 
-        // Find existing attendance for this date
-        const startOfDay = new Date(request.attendanceDate);
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date(startOfDay);
-        endOfDay.setDate(endOfDay.getDate() + 1);
+        // Compute day range in Asia/Kolkata timezone
+        const dateStr = moment(request.attendanceDate).tz('Asia/Kolkata').format('YYYY-MM-DD');
+        const startOfDay = moment.tz(dateStr, 'YYYY-MM-DD', 'Asia/Kolkata').startOf('day').toDate();
+        const endOfDay = moment.tz(dateStr, 'YYYY-MM-DD', 'Asia/Kolkata').endOf('day').toDate();
 
         let attendance = await prisma.attendance.findFirst({
             where: {
                 employeeId: request.employeeId,
-                date: { gte: startOfDay, lt: endOfDay }
+                date: { gte: startOfDay, lte: endOfDay }
+            },
+            include: {
+                sessions: { orderBy: { clockInTime: 'asc' } }
             }
         });
 
-        // Parse requested check in/out using IST (+05:30) offset
-        const clockInDate = request.requestedCheckIn ? new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckIn}:00+05:30`) : startOfDay;
-        const clockOutDate = request.requestedCheckOut ? new Date(`${startOfDay.toISOString().split('T')[0]}T${request.requestedCheckOut}:00+05:30`) : startOfDay;
+        const existingFirstSession = attendance?.sessions?.[0] || null;
+
+        const parseTimeString = (timeStr, specificDateStr = dateStr) => {
+            if (!timeStr || typeof timeStr !== 'string') return null;
+            const trimmed = timeStr.trim();
+            if (!trimmed || trimmed === '-') return null;
+            const is12Hour = trimmed.toUpperCase().includes('AM') || trimmed.toUpperCase().includes('PM');
+            const format = is12Hour ? 'YYYY-MM-DD hh:mm A' : 'YYYY-MM-DD HH:mm';
+            const m = moment.tz(`${specificDateStr} ${trimmed}`, format, 'Asia/Kolkata');
+            return m.isValid() ? m.toDate() : null;
+        };
+
+        const checkInDateStr = request.requestedCheckInDate 
+            ? moment(request.requestedCheckInDate).tz('Asia/Kolkata').format('YYYY-MM-DD') 
+            : dateStr;
+        const checkOutDateStr = request.requestedCheckOutDate 
+            ? moment(request.requestedCheckOutDate).tz('Asia/Kolkata').format('YYYY-MM-DD') 
+            : dateStr;
+
+        // Parse requested check-in time or retain existing
+        let clockInDate = null;
+        if (request.requestedCheckIn) {
+            clockInDate = parseTimeString(request.requestedCheckIn, checkInDateStr);
+        } else if (request.requestedCheckInDate) {
+            clockInDate = new Date(request.requestedCheckInDate);
+        }
+        if (!clockInDate && existingFirstSession?.clockInTime) {
+            clockInDate = existingFirstSession.clockInTime;
+        }
+
+        // Parse requested check-out time or retain existing
+        let clockOutDate = null;
+        if (request.requestedCheckOut) {
+            clockOutDate = parseTimeString(request.requestedCheckOut, checkOutDateStr);
+            if (clockInDate && clockOutDate && clockOutDate < clockInDate && checkOutDateStr === checkInDateStr) {
+                // Night shift / overnight rollover
+                clockOutDate = moment(clockOutDate).add(1, 'days').toDate();
+            }
+        } else if (request.requestedCheckOutDate) {
+            clockOutDate = new Date(request.requestedCheckOutDate);
+        }
+        if (!clockOutDate && existingFirstSession?.clockOutTime) {
+            clockOutDate = existingFirstSession.clockOutTime;
+        }
+
         let duration = 0;
-        if (request.requestedCheckIn && request.requestedCheckOut) {
-             duration = (clockOutDate.getTime() - clockInDate.getTime()) / (1000 * 60 * 60); // hours
+        if (clockInDate && clockOutDate) {
+            duration = Math.max(0, parseFloat(((clockOutDate.getTime() - clockInDate.getTime()) / (1000 * 60 * 60)).toFixed(2)));
         }
 
         if (attendance) {
@@ -160,14 +212,14 @@ router.put('/admin/:id/approve', authenticateJWT, async (req, res) => {
                     finalRemark: "Regularized"
                 }
             });
-            // Update or create a session
-            const firstSession = await prisma.session.findFirst({ where: { attendanceId: attendance.id }});
-            if (firstSession) {
+
+            // Update or create session
+            if (existingFirstSession) {
                 await prisma.session.update({
-                    where: { id: firstSession.id },
+                    where: { id: existingFirstSession.id },
                     data: {
-                        clockInTime: clockInDate,
-                        clockOutTime: clockOutDate,
+                        clockInTime: clockInDate || existingFirstSession.clockInTime,
+                        clockOutTime: clockOutDate || existingFirstSession.clockOutTime,
                         duration: duration
                     }
                 });
@@ -175,7 +227,7 @@ router.put('/admin/:id/approve', authenticateJWT, async (req, res) => {
                 await prisma.session.create({
                     data: {
                         attendanceId: attendance.id,
-                        clockInTime: clockInDate,
+                        clockInTime: clockInDate || startOfDay,
                         clockOutTime: clockOutDate,
                         duration: duration
                     }
@@ -196,7 +248,7 @@ router.put('/admin/:id/approve', authenticateJWT, async (req, res) => {
                     finalRemark: "Regularized",
                     sessions: {
                         create: {
-                            clockInTime: clockInDate,
+                            clockInTime: clockInDate || startOfDay,
                             clockOutTime: clockOutDate,
                             duration: duration
                         }
@@ -213,12 +265,11 @@ router.put('/admin/:id/approve', authenticateJWT, async (req, res) => {
 });
 
 // ================== Admin: Reject Regularization Request ==================
-router.put('/admin/:id/reject', authenticateJWT, async (req, res) => {
-    try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+router.put('/admin/:id/reject', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
 
-        const organization = await prisma.organization.findUnique({ where: { id: decoded.id } });
+    try {
+        const organization = await prisma.organization.findUnique({ where: { id: req.organizationId } });
         if (!organization) return res.status(404).send({ message: 'Organization not found' });
 
         const requestId = req.params.id;

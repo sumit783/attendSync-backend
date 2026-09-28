@@ -2,6 +2,8 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const prisma = require('../prisma/client');
 const authenticateJWT = require('../middleware/authenticateJWT');
+const authenticateAdmin = require('../middleware/authenticateAdmin');
+const requireOrganizationAccess = require('../middleware/requireOrganizationAccess');
 const router = express.Router();
 
 const formatDate = (date) => {
@@ -13,13 +15,12 @@ const formatDate = (date) => {
 };
 
 // ================== GET Leave Requests (Admin) ==================
-router.get('/organization/leave-requests', authenticateJWT, async (req, res) => {
-    try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+router.get('/organization/leave-requests', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
 
+    try {
         const organization = await prisma.organization.findUnique({
-            where: { id: decoded.id }
+            where: { id: req.organizationId }
         });
         if (!organization) {
             return res.status(404).send({ message: 'Organization not found' });
@@ -89,6 +90,8 @@ router.get('/organization/leave-requests', authenticateJWT, async (req, res) => 
 
 // ================== Leave Request (Employee) ==================
 router.post('/employee/leave-request', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     const { leaveType, startDate, endDate, reason, employeeId } = req.body;
 
     try {
@@ -162,7 +165,9 @@ router.post('/employee/leave-request', authenticateJWT, async (req, res) => {
 });
 
 // ================== Leave Approval/Rejection (Admin) ==================
-router.post('/organization/leave-approval', authenticateJWT, async (req, res) => {
+router.post('/organization/leave-approval', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     const { leaveId, status, reason } = req.body; 
 
     if (!['Approved', 'Rejected'].includes(status)) {
@@ -170,11 +175,8 @@ router.post('/organization/leave-approval', authenticateJWT, async (req, res) =>
     }
 
     try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
         const organization = await prisma.organization.findUnique({
-            where: { id: decoded.id }
+            where: { id: req.organizationId }
         });
         if (!organization) {
             return res.status(404).send({ message: 'Organization not found.' });
@@ -237,6 +239,8 @@ router.post('/organization/leave-approval', authenticateJWT, async (req, res) =>
 
 // ================== GET Employee Leave Requests ==================
 router.get('/employee/leave-requests', authenticateJWT, async (req, res) => {
+    // #swagger.tags = ['Attendance and Employee Management']
+
     try {
         const token = req.headers.authorization.split(' ')[1];
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
