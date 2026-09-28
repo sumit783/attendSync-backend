@@ -29,12 +29,13 @@ const requireSuperAdmin = async (req, res, next) => {
                 if (decoded.id) {
                     const admin = await prisma.admin.findUnique({
                         where: { id: decoded.id },
-                        include: { roles: true }
+                        include: { adminRoles: true }
                     });
-                    if (admin && admin.roles && admin.roles.some(r => r.role === 'SUPER_ADMIN')) {
+                    const sRoles = admin?.adminRoles || admin?.roles || [];
+                    if (admin && sRoles.some(r => r.role === 'SUPER_ADMIN')) {
                         req.user = decoded;
                         req.adminId = admin.id;
-                        req.adminRoles = admin.roles;
+                        req.adminRoles = sRoles;
                         return next();
                     }
                 }
@@ -86,4 +87,3 @@ router.get('/activity-logs', requireSuperAdmin, activityLogController.getActivit
 router.delete('/activity-logs/clear', requireSuperAdmin, activityLogController.clearActivityLogs);
 
 module.exports = router;
-
