@@ -8,111 +8,103 @@ datasource db {
 }
 
 model Organization {
-  id                     String  @id @default(uuid())
-  organizationProfilePic String? @db.LongText
+  id                     String         @id @default(uuid())
+  organizationProfilePic String?        @db.LongText
   organizationName       String
   organizationOwnerName  String
-  organizationCode       String  @unique
+  organizationCode       String         @unique
+  address                String?
+  wifiSSID               String?
+  wifiBSSID              String?
+  inTime                 String?
+  outTime                String?
+  latitude               Float          @default(0)
+  longitude              Float          @default(0)
+  radius                 Float?
+  createdAt              DateTime       @default(now())
+  workingDays            String?        @db.LongText
+  employeeCount          Int            @default(0)
+  parentId               String?
+  autoLogout             Boolean        @default(false)
+  adminRoles             AdminRole[]
+  announcements          Announcement[]
+  customRoles            CustomRole[]
+  departments            Department[]
+  designations           Designation[]
+  employees              Employee[]
+  expenses               Expense[]
+  holidays               Holiday[]
+  notifications          Notification[]
+  Organization           Organization?  @relation("OrganizationToOrganization", fields: [parentId], references: [id])
+  other_Organization     Organization[] @relation("OrganizationToOrganization")
+  shifts                 Shift[]
+  supportQueries         SupportQuery[]
+  tasks                  Task[]
 
-  address   String?
-  wifiSSID  String?
-  wifiBSSID String?
-
-  inTime  String?
-  outTime String?
-
-  latitude  Float    @default(0)
-  longitude Float    @default(0)
-  radius    Float?
-  createdAt DateTime @default(now())
-  
-  autoLogout Boolean  @default(false)
-
-  // MySQL doesn't support scalar arrays, use Json
-  workingDays Json?
-
-  employeeCount Int @default(0)
-
-  // Super Organization Hierarchy
-  parentId String?
-  parent   Organization?  @relation("SuperOrgHierarchy", fields: [parentId], references: [id])
-  children Organization[] @relation("SuperOrgHierarchy")
-
-  employees     Employee[]
-  notifications Notification[]
-  shifts        Shift[]
-  adminRoles    AdminRole[]
-  departments   Department[]
-  designations  Designation[]
-  tasks         Task[]
-  customRoles   CustomRole[]
-  holidays      Holiday[]
-  announcements Announcement[]
-  supportQueries SupportQuery[]
-  expenses      Expense[]
+  @@index([parentId], map: "Organization_parentId_fkey")
 }
 
 model Employee {
-  id               String       @id @default(uuid())
-  organizationId   String
-  organization     Organization @relation(fields: [organizationId], references: [id])
-  employeeName     String
-  employeeEmail    String       @unique
-  password         String
-  profilePic       String? @db.LongText
-  organizationCode String?
-  role             Role         @default(Employee)
-  isVerified       Boolean      @default(false)
-  otp              String?
-  otpExpires       DateTime?
-  status           Status       @default(active)
-  lastLogin        DateTime?
-  salary           Float?       @default(0)
-
-  attendances     Attendance[]
-  leaves          Leave[]
-  notifications   Notification[]
-  devices         EmployeeDevice[]
-  regularizations AttendanceRegularization[]
-
-  shiftId String?
-  shift   Shift?  @relation(fields: [shiftId], references: [id])
-
-  departmentId String?
-  department   Department? @relation(fields: [departmentId], references: [id])
-  designations Designation[]
-  customRoleId  String?
-  customRole    CustomRole? @relation(fields: [customRoleId], references: [id])
-
-  history EmploymentHistory[]
-  tasks   Task[]
-  announcements EmployeeAnnouncement[]
-  announcementReplies AnnouncementReply[]
-  expenses      Expense[]
+  id                   String                     @id @default(uuid())
+  organizationId       String
+  employeeName         String
+  employeeEmail        String                     @unique
+  password             String
+  profilePic           String?                    @db.LongText
+  organizationCode     String?
+  role                 Role                       @default(Employee)
+  isVerified           Boolean                    @default(false)
+  otp                  String?
+  otpExpires           DateTime?
+  status               Status                     @default(active)
+  lastLogin            DateTime?
+  shiftId              String?
+  departmentId         String?
+  customRoleId         String?
+  salary               Float?                     @default(0)
+  AnnouncementReply    AnnouncementReply[]
+  attendances          Attendance[]
+  regularizations      AttendanceRegularization[]
+  CustomRole           CustomRole?                @relation(fields: [customRoleId], references: [id])
+  Department           Department?                @relation(fields: [departmentId], references: [id])
+  organization         Organization               @relation(fields: [organizationId], references: [id])
+  shift                Shift?                     @relation(fields: [shiftId], references: [id])
+  EmployeeAnnouncement EmployeeAnnouncement[]
+  devices              EmployeeDevice[]
+  history              EmploymentHistory[]
+  Expense              Expense[]
+  leaves               Leave[]
+  notifications        Notification[]
+  Task                 Task[]
+  Designation          Designation[]
 
   @@index([organizationCode])
-  @@index([organizationId, status])
+  @@index([customRoleId], map: "Employee_customRoleId_fkey")
+  @@index([departmentId], map: "Employee_departmentId_fkey")
   @@index([organizationCode, status])
+  @@index([organizationId], map: "Employee_organizationId_fkey")
+  @@index([organizationId, status])
+  @@index([shiftId], map: "Employee_shiftId_fkey")
 }
 
 model Shift {
   id             String       @id @default(uuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
   name           String
   startTime      String
   endTime        String
   weekOffs       String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
+  employees      Employee[]
+  organization   Organization @relation(fields: [organizationId], references: [id])
 
-  employees Employee[]
+  @@index([organizationId], map: "Shift_organizationId_fkey")
 }
 
 model EmployeeDevice {
   id             String       @id @default(uuid())
   employeeId     String
-  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   uuid           String       @unique
   model          String?
   manufacturer   String?
@@ -121,12 +113,14 @@ model EmployeeDevice {
   firebaseToken  String?
   status         DeviceStatus @default(ACTIVE)
   registeredDate DateTime     @default(now())
+  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId], map: "EmployeeDevice_employeeId_fkey")
 }
 
 model Attendance {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   employeeId       String
-  employee         Employee @relation(fields: [employeeId], references: [id])
   employeeName     String
   organizationCode String
   date             DateTime
@@ -136,31 +130,31 @@ model Attendance {
   ipAddress        String?
   latitude         Float?
   longitude        Float?
-
-  sessions Session[]
-
-  totalHours       Float    @default(0)
-  extraHours       Float    @default(0)
-  finalRemark      String   @default("Absent")
-  regularized      Boolean  @default(false)
+  totalHours       Float     @default(0)
+  extraHours       Float     @default(0)
+  finalRemark      String    @default("Absent")
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now())
   regularizationId String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @default(now())
+  regularized      Boolean   @default(false)
+  employee         Employee  @relation(fields: [employeeId], references: [id])
+  sessions         Session[]
 
   @@index([employeeId, date])
   @@index([organizationCode, date])
+  @@index([employeeId], map: "Attendance_employeeId_fkey")
   @@index([organizationCode, finalRemark])
 }
 
 model Session {
   id             String     @id @default(uuid())
   attendanceId   String
-  attendance     Attendance @relation(fields: [attendanceId], references: [id])
   clockInTime    DateTime
   clockOutTime   DateTime?
   duration       Float      @default(0)
   clockInRemark  String?
   clockOutRemark String?
+  attendance     Attendance @relation(fields: [attendanceId], references: [id])
 
   @@index([attendanceId])
 }
@@ -168,7 +162,6 @@ model Session {
 model Leave {
   id               String      @id @default(uuid())
   employeeId       String
-  employee         Employee    @relation(fields: [employeeId], references: [id])
   employeeName     String
   organizationCode String
   leaveType        LeaveType
@@ -177,25 +170,278 @@ model Leave {
   status           LeaveStatus @default(Pending)
   reason           String?
   createdAt        DateTime    @default(now())
+  employee         Employee    @relation(fields: [employeeId], references: [id])
 
   @@index([employeeId, startDate, endDate])
   @@index([organizationCode, startDate, endDate])
+  @@index([employeeId], map: "Leave_employeeId_fkey")
   @@index([organizationCode, status, startDate, endDate])
 }
 
 model Notification {
-  id             String           @id @default(uuid())
+  id             String            @id @default(uuid())
   userId         String
-  user           Employee         @relation(fields: [userId], references: [id])
   organizationId String
-  organization   Organization     @relation(fields: [organizationId], references: [id])
   message        String
-  type           NotificationType
-  createdAt      DateTime         @default(now())
-  isRead         Boolean          @default(false)
+  type           Notification_type
+  createdAt      DateTime          @default(now())
+  isRead         Boolean           @default(false)
   target         TargetType
   announcementId String?
-  announcement   Announcement?    @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  announcement   Announcement?     @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  organization   Organization      @relation(fields: [organizationId], references: [id])
+  user           Employee          @relation(fields: [userId], references: [id])
+
+  @@index([announcementId], map: "Notification_announcementId_fkey")
+  @@index([organizationId], map: "Notification_organizationId_fkey")
+  @@index([userId], map: "Notification_userId_fkey")
+}
+
+model AttendanceRegularization {
+  id                    String               @id @default(uuid())
+  employeeId            String
+  organizationCode      String
+  attendanceDate        DateTime
+  requestType           String
+  requestedCheckIn      String?
+  requestedCheckOut     String?
+  reason                String
+  attachment            String?              @db.LongText
+  status                RegularizationStatus @default(Pending)
+  adminRemark           String?
+  approvedBy            String?
+  approvedAt            DateTime?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  requestedCheckInDate  DateTime?
+  requestedCheckOutDate DateTime?
+  employee              Employee             @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, attendanceDate])
+  @@index([organizationCode, status])
+}
+
+model EmploymentHistory {
+  id               String    @id @default(uuid())
+  employeeId       String
+  organizationCode String
+  status           String    @default("inactive")
+  joinedAt         DateTime  @default(now())
+  leftAt           DateTime?
+  employee         Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId], map: "EmploymentHistory_employeeId_fkey")
+  @@index([organizationCode])
+}
+
+model ActivityLog {
+  id               String   @id
+  method           String   @db.VarChar(20)
+  url              String   @db.VarChar(500)
+  route            String?  @db.VarChar(255)
+  statusCode       Int
+  ipAddress        String?  @db.VarChar(100)
+  userAgent        String?  @db.Text
+  userId           String?  @db.VarChar(100)
+  userName         String?  @db.VarChar(150)
+  userEmail        String?  @db.VarChar(150)
+  role             String?  @db.VarChar(50)
+  organizationCode String?  @db.VarChar(50)
+  organizationId   String?  @db.VarChar(100)
+  requestBody      String?  @db.LongText
+  responseTimeMs   Int?
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt], map: "idx_activity_created")
+  @@index([method], map: "idx_activity_method")
+  @@index([organizationCode], map: "idx_activity_org")
+  @@index([statusCode], map: "idx_activity_status")
+}
+
+model Admin {
+  id         String      @id
+  email      String      @unique
+  password   String
+  isVerified Boolean     @default(false)
+  otp        String?
+  otpExpires DateTime?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime
+  AdminRole  AdminRole[]
+  Task       Task[]
+}
+
+model AdminRole {
+  id             String         @id
+  adminId        String
+  organizationId String?
+  role           AdminRole_role @default(ADMIN)
+  createdAt      DateTime       @default(now())
+  Admin          Admin          @relation(fields: [adminId], references: [id])
+  Organization   Organization?  @relation(fields: [organizationId], references: [id])
+
+  @@index([adminId])
+  @@index([organizationId])
+}
+
+model Announcement {
+  id                   String                 @id
+  organizationId       String
+  title                String?
+  message              String                 @db.LongText
+  canReply             Boolean                @default(false)
+  targetAll            Boolean                @default(true)
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime
+  isReadBy             String                 @db.LongText
+  organization         Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  replies              AnnouncementReply[]
+  EmployeeAnnouncement EmployeeAnnouncement[]
+  notifications        Notification[]
+
+  @@index([organizationId], map: "Announcement_organizationId_fkey")
+}
+
+model AnnouncementReply {
+  id             String       @id
+  announcementId String
+  employeeId     String
+  message        String       @db.LongText
+  createdAt      DateTime     @default(now())
+  isRead         Boolean      @default(false)
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([announcementId], map: "AnnouncementReply_announcementId_fkey")
+  @@index([employeeId], map: "AnnouncementReply_employeeId_fkey")
+}
+
+model CustomRole {
+  id                             String       @id
+  organizationId                 String
+  name                           String
+  attendanceAccess               Boolean      @default(false)
+  financeAccess                  Boolean      @default(false)
+  leaveAccess                    Boolean      @default(false)
+  announcementAccess             Boolean      @default(false)
+  designationAndWorkAssignAccess Boolean      @default(false)
+  roleCreateAccess               Boolean      @default(false)
+  shiftAndHolidayAccess          Boolean      @default(false)
+  reportPageAccess               Boolean      @default(false)
+  createdAt                      DateTime     @default(now())
+  updatedAt                      DateTime
+  Organization                   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  Employee                       Employee[]
+
+  @@index([organizationId])
+}
+
+model Department {
+  id             String        @id
+  name           String
+  organizationId String
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime
+  Organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  Designation    Designation[]
+  Employee       Employee[]
+
+  @@index([organizationId])
+}
+
+model Designation {
+  id             String       @id
+  name           String
+  departmentId   String
+  organizationId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime
+  Department     Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  Organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  Employee       Employee[]
+
+  @@index([departmentId])
+  @@index([organizationId])
+}
+
+model EmployeeAnnouncement {
+  id             String       @id
+  announcementId String
+  employeeId     String
+  Announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  Employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([announcementId, employeeId])
+  @@index([employeeId], map: "EmployeeAnnouncement_employeeId_fkey")
+}
+
+model Expense {
+  id               String         @id
+  employeeId       String
+  organizationId   String
+  organizationCode String
+  title            String
+  type             String
+  amount           Float
+  billUrl          String?        @db.LongText
+  description      String?        @db.Text
+  status           Expense_status @default(PENDING)
+  rejectionReason  String?        @db.Text
+  reviewedBy       String?
+  reviewedAt       DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime
+  Employee         Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  Organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@index([organizationId, status])
+}
+
+model Holiday {
+  id             String       @id
+  organizationId String
+  name           String
+  startDate      DateTime
+  endDate        DateTime
+  description    String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime
+  Organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+}
+
+model SupportQuery {
+  id             String              @id
+  organizationId String
+  message        String              @db.Text
+  attachment     String?             @db.LongText
+  status         SupportQuery_status @default(PENDING)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime
+  Organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId], map: "SupportQuery_organizationId_fkey")
+}
+
+model Task {
+  id             String       @id
+  title          String
+  description    String?      @db.LongText
+  status         Task_status  @default(PENDING)
+  organizationId String
+  employeeId     String
+  assignedById   String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime
+  Admin          Admin?       @relation(fields: [assignedById], references: [id])
+  Employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  Organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([assignedById])
+  @@index([employeeId])
+  @@index([organizationId])
 }
 
 enum Role {
@@ -223,54 +469,6 @@ enum LeaveStatus {
   Rejected
 }
 
-enum NotificationType {
-  Reminder
-  LeaveApproval
-  Absent
-  ClockIn
-  ClockOut
-  Join
-  Announcement
-}
-
-model Announcement {
-  id              String         @id @default(uuid())
-  organizationId  String
-  organization    Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  title           String?
-  message         String         @db.LongText
-  canReply        Boolean        @default(false)
-  targetAll       Boolean        @default(true) // If true, target all employees in the organization
-  
-  targetedEmployees EmployeeAnnouncement[]
-  notifications     Notification[]
-  replies           AnnouncementReply[]
-  isReadBy          Json           @default("[]") // Array of employee IDs who have read this announcement
-  createdAt         DateTime       @default(now())
-  updatedAt         DateTime       @updatedAt
-}
-
-model EmployeeAnnouncement {
-  id              String         @id @default(uuid())
-  announcementId  String
-  announcement    Announcement   @relation(fields: [announcementId], references: [id], onDelete: Cascade)
-  employeeId      String
-  employee        Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  
-  @@unique([announcementId, employeeId])
-}
-
-model AnnouncementReply {
-  id              String         @id @default(uuid())
-  announcementId  String
-  announcement    Announcement   @relation(fields: [announcementId], references: [id], onDelete: Cascade)
-  employeeId      String
-  employee        Employee       @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  message         String         @db.LongText
-  isRead          Boolean        @default(false)
-  createdAt       DateTime       @default(now())
-}
-
 enum TargetType {
   Employee
   Organization
@@ -281,30 +479,6 @@ enum DeviceStatus {
   REVOKED
 }
 
-model AttendanceRegularization {
-  id                String               @id @default(uuid())
-  employeeId        String
-  employee          Employee             @relation(fields: [employeeId], references: [id])
-  organizationCode  String
-  attendanceDate    DateTime
-  requestType       String // e.g. "Missing Check-In", "Missing Check-Out", "System Error"
-  requestedCheckIn  String? // e.g. "09:00"
-  requestedCheckOut String? // e.g. "18:00"
-  requestedCheckInDate  DateTime?
-  requestedCheckOutDate DateTime?
-  reason            String
-  attachment        String? @db.LongText // Base64 data
-  status            RegularizationStatus @default(Pending)
-  adminRemark       String?
-  approvedBy        String? // Admin/Manager ID or name
-  approvedAt        DateTime?
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-
-  @@index([employeeId, attendanceDate])
-  @@index([organizationCode, status])
-}
-
 enum RegularizationStatus {
   Pending
   Approved
@@ -312,220 +486,37 @@ enum RegularizationStatus {
   Cancelled
 }
 
-model EmploymentHistory {
-  id               String    @id @default(uuid())
-  employeeId       String
-  employee         Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  organizationCode String
-  status           String    @default("inactive")
-  joinedAt         DateTime  @default(now())
-  leftAt           DateTime?
-
-  @@index([organizationCode])
-}
-
-model Admin {
-  id         String    @id @default(uuid())
-  email      String    @unique
-  password   String
-  isVerified Boolean   @default(false)
-  otp        String?
-  otpExpires DateTime?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-
-  roles AdminRole[]
-  assignedTasks Task[]
-}
-
-enum AdminRoleType {
+enum AdminRole_role {
   ADMIN
   SUPER_ADMIN
 }
 
-model AdminRole {
-  id             String        @id @default(uuid())
-  adminId        String
-  admin          Admin         @relation(fields: [adminId], references: [id])
-  organizationId String?
-  organization   Organization? @relation(fields: [organizationId], references: [id])
-  role           AdminRoleType @default(ADMIN)
-  createdAt      DateTime      @default(now())
-
-  @@index([adminId])
-  @@index([organizationId])
-}
-
-model Department {
-  id             String        @id @default(uuid())
-  name           String
-  organizationId String
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-
-  designations   Designation[]
-  employees      Employee[]
-
-  @@index([organizationId])
-}
-
-model Designation {
-  id             String        @id @default(uuid())
-  name           String
-  departmentId   String
-  department     Department    @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-  organizationId String
-  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-
-  employees      Employee[]
-
-  @@index([departmentId])
-  @@index([organizationId])
-}
-
-enum TaskStatus {
+enum Task_status {
   PENDING
   IN_PROGRESS
   COMPLETED
 }
 
-model Task {
-  id             String       @id @default(uuid())
-  title          String
-  description    String?      @db.LongText
-  status         TaskStatus   @default(PENDING)
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  employeeId     String
-  employee       Employee     @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  assignedById   String?
-  assignedBy     Admin?       @relation(fields: [assignedById], references: [id], onDelete: SetNull)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-
-  @@index([organizationId])
-  @@index([employeeId])
-  @@index([assignedById])
+enum Notification_type {
+  Reminder
+  LeaveApproval
+  Absent
+  ClockIn
+  ClockOut
+  Join
+  Announcement
 }
 
-model CustomRole {
-  id             String       @id @default(uuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  name           String
-
-  attendanceAccess               Boolean @default(false)
-  financeAccess                  Boolean @default(false)
-  leaveAccess                    Boolean @default(false)
-  announcementAccess             Boolean @default(false)
-  designationAndWorkAssignAccess Boolean @default(false)
-  roleCreateAccess               Boolean @default(false)
-  shiftAndHolidayAccess          Boolean @default(false)
-  reportPageAccess               Boolean @default(false)
-
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-
-  employees      Employee[]
-
-  @@index([organizationId])
-}
-
-model Holiday {
-  id             String       @id @default(uuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  name           String
-  startDate      DateTime
-  endDate        DateTime
-  description    String?
-
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-
-  @@index([organizationId])
-}
-
-enum QueryStatus {
+enum SupportQuery_status {
   PENDING
   IN_PROCESS
   RESOLVED
   CANCELLED
 }
 
-model SupportQuery {
-  id             String       @id @default(uuid())
-  organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  
-  message        String       @db.Text
-  attachment     String?      @db.LongText
-  
-  status         QueryStatus  @default(PENDING)
-  
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-}
-
-enum ExpenseStatus {
+enum Expense_status {
   PENDING
   APPROVED
   REJECTED
   PAID
-}
-
-model Expense {
-  id               String        @id @default(uuid())
-  employeeId       String
-  employee         Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  organizationId   String
-  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  organizationCode String
-
-  title            String
-  type             String        // e.g. Travel, Food, Office Supplies
-  amount           Float
-  billUrl          String?       @db.LongText  // base64 or uploaded URL
-  description      String?       @db.Text
-
-  status           ExpenseStatus @default(PENDING)
-  rejectionReason  String?       @db.Text      // Filled when REJECTED
-  reviewedBy       String?       // Admin name/id who reviewed
-  reviewedAt       DateTime?
-
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
-
-  @@index([employeeId])
-  @@index([organizationId, status])
-}
-
-model ActivityLog {
-  id               String   @id @default(uuid())
-  method           String   // POST, PUT, PATCH, DELETE
-  url              String   @db.VarChar(500)
-  route            String?  @db.VarChar(255)
-  statusCode       Int
-  ipAddress        String?  @db.VarChar(100)
-  userAgent        String?  @db.Text
-  
-  userId           String?  @db.VarChar(100)
-  userName         String?  @db.VarChar(150)
-  userEmail        String?  @db.VarChar(150)
-  role             String?  @db.VarChar(50)
-  organizationCode String?  @db.VarChar(50)
-  organizationId   String?  @db.VarChar(100)
-  
-  requestBody      String?  @db.LongText
-  responseTimeMs   Int?
-  
-  createdAt        DateTime @default(now())
-
-  @@index([method])
-  @@index([statusCode])
-  @@index([organizationCode])
-  @@index([createdAt])
 }

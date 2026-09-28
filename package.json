@@ -41,7 +41,7 @@
     "xss-clean": "^0.1.4"
   },
   "devDependencies": {
-    "prisma": "^5.22.0",
+    "prisma": "^8.0.0-rc.17",
     "swagger-autogen": "^2.23.7"
   }
 }

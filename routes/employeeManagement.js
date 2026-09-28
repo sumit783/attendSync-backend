@@ -42,7 +42,7 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
         let currentDate = moment().tz('Asia/Kolkata').format('YYYY-MM-DD');
 
         if (date && time) {
-            currentLocalTime = moment.tz(`${date} ${time}`, ['YYYY-MM-DD HH:mm', 'YYYY-MM-DD HH:mm:ss'], 'Asia/Kolkata').toDate();
+            currentLocalTime = moment.tz(`${date} ${time}`, ['YYYY-MM-DD HH:mm', 'YYYY-MM-DD HH:mm:ss', 'YYYY-MM-DD hh:mm A', 'YYYY-MM-DD h:mm A'], 'Asia/Kolkata').toDate();
             currentDate = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').format('YYYY-MM-DD');
         } else if (date) {
             currentDate = moment.tz(date, 'YYYY-MM-DD', 'Asia/Kolkata').format('YYYY-MM-DD');
@@ -56,13 +56,24 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
 
         if (!employee) return res.status(404).json({ message: 'Employee not found.' });
 
-        // ✅ Validate Device
+        // ✅ Validate / Register Device
         if (process.env.NODE_ENV !== 'development') {
             if (employee.devices.length === 0) {
-                return res.status(403).json({ message: 'Device not registered or revoked. Please contact administrator.' });
-            }
-            if (employee.devices[0].uuid !== deviceId) {
-                // If iOS, we accept it and update it because iOS PWA local storage clears after 7 days
+                // If employee has no device registered yet, auto-register this device
+                if (deviceId) {
+                    await prisma.employeeDevice.upsert({
+                        where: { uuid: deviceId },
+                        update: { employeeId: employee.id, status: 'ACTIVE' },
+                        create: {
+                            employeeId: employee.id,
+                            uuid: deviceId,
+                            model: isIOS ? 'iOS Device' : 'Device',
+                            status: 'ACTIVE'
+                        }
+                    });
+                }
+            } else if (employee.devices[0].uuid !== deviceId) {
+                // If iOS or web fallback, update/reassign device
                 if (isIOS || deviceId === 'web-fallback-id') {
                     const existingDevice = await prisma.employeeDevice.findUnique({ where: { uuid: deviceId } });
                     
@@ -90,16 +101,16 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
 
         // ✅ Check WiFi (Skip for iOS, rely on GPS)
         if (!isIOS) {
-            if (organization.wifiSSID && organization.wifiSSID !== wifiSSID) {
+            if (organization?.wifiSSID && organization.wifiSSID !== wifiSSID) {
                 return res.status(400).json({ message: `Wrong Wi-Fi. Please connect to ${organization.wifiSSID}.` });
             }
-            if (organization.wifiBSSID && wifiBSSID && wifiBSSID !== '02:00:00:00:00:00' && organization.wifiBSSID.toLowerCase() !== wifiBSSID.toLowerCase()) {
+            if (organization?.wifiBSSID && wifiBSSID && wifiBSSID !== '02:00:00:00:00:00' && organization.wifiBSSID.toLowerCase() !== wifiBSSID.toLowerCase()) {
                 return res.status(400).json({ message: `Wi-Fi BSSID mismatch. Expected: ${organization.wifiBSSID}, Got: ${wifiBSSID}` });
             }
         }
 
         // ✅ GPS Check
-        if (employeeLatitude && employeeLongitude && organization.latitude && organization.longitude && organization.radius) {
+        if (employeeLatitude && employeeLongitude && organization?.latitude && organization?.longitude && organization?.radius) {
             const distance = haversineDistance(
                 { latitude: employeeLatitude, longitude: employeeLongitude },
                 { latitude: organization.latitude, longitude: organization.longitude }
@@ -109,16 +120,23 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             }
         }
 
-        const inTimeStr = employee.shift ? employee.shift.startTime : organization.inTime;
-        const outTimeStr = employee.shift ? employee.shift.endTime : organization.outTime;
+        const inTimeStr = employee.shift?.startTime || organization?.inTime || '09:00';
+        const outTimeStr = employee.shift?.endTime || organization?.outTime || '18:00';
         
-        // Parse time using standard format if it's from shift (HH:mm) or organization format
-        const orgInFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
-        const orgOutFormat = employee.shift ? 'HH:mm' : 'hh:mm A';
+        const parseTimeWithFallback = (timeStr, defaultHour, defaultMinute) => {
+            if (!timeStr) {
+                return moment.tz(currentDate, 'YYYY-MM-DD', 'Asia/Kolkata').hour(defaultHour).minute(defaultMinute).second(0).millisecond(0);
+            }
+            const formats = ['HH:mm', 'hh:mm A', 'h:mm A', 'H:mm', 'HH:mm:ss', 'hh:mm:ss A'];
+            for (const fmt of formats) {
+                const parsed = moment.tz(`${currentDate} ${timeStr}`, `YYYY-MM-DD ${fmt}`, 'Asia/Kolkata');
+                if (parsed.isValid()) return parsed;
+            }
+            return moment.tz(currentDate, 'YYYY-MM-DD', 'Asia/Kolkata').hour(defaultHour).minute(defaultMinute).second(0).millisecond(0);
+        };
 
-        const currentMom = moment(currentLocalTime).tz('Asia/Kolkata');
-        let shiftStart = moment.tz(`${currentDate} ${inTimeStr}`, `YYYY-MM-DD ${orgInFormat}`, 'Asia/Kolkata');
-        let shiftEnd = moment.tz(`${currentDate} ${outTimeStr}`, `YYYY-MM-DD ${orgOutFormat}`, 'Asia/Kolkata');
+        let shiftStart = parseTimeWithFallback(inTimeStr, 9, 0);
+        let shiftEnd = parseTimeWithFallback(outTimeStr, 18, 0);
         
         let isOvernight = false;
         if (shiftEnd.isBefore(shiftStart)) {
@@ -126,8 +144,9 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             shiftEnd.add(1, 'day');
         }
 
+        const currentMom = moment(currentLocalTime).tz('Asia/Kolkata');
         // If it's an overnight shift and the employee is hitting the API after midnight
-        if (isOvernight && currentMom.isBefore(moment.tz(`${currentDate} ${inTimeStr}`, `YYYY-MM-DD ${orgInFormat}`, 'Asia/Kolkata'))) {
+        if (isOvernight && currentMom.isBefore(shiftStart)) {
             shiftStart.subtract(1, 'day');
             shiftEnd.subtract(1, 'day');
         }
@@ -135,9 +154,11 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
         const organizationInTime = shiftStart.utc().toDate();
         const organizationOutTime = shiftEnd.utc().toDate();
 
-        // Search window: 12 hours before shift start, to shift end
-        const searchStart = shiftStart.clone().subtract(12, 'hours').toDate();
-        const searchEnd = shiftEnd.clone().add(4, 'hours').toDate();
+        // Search window: covers shift range and current calendar day
+        const dayStart = moment(currentLocalTime).tz('Asia/Kolkata').startOf('day');
+        const dayEnd = moment(currentLocalTime).tz('Asia/Kolkata').endOf('day');
+        const searchStart = moment.min(shiftStart.clone().subtract(12, 'hours'), dayStart).toDate();
+        const searchEnd = moment.max(shiftEnd.clone().add(6, 'hours'), dayEnd).toDate();
 
         // 1. First check if there is an active unclosed session for this employee
         const activeSession = await prisma.session.findFirst({
@@ -149,7 +170,7 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             },
             include: {
                 attendance: {
-                    include: { sessions: true }
+                    include: { sessions: { orderBy: { clockInTime: 'asc' } } }
                 }
             },
             orderBy: { clockInTime: 'desc' }
@@ -179,7 +200,10 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
                 }
             });
 
-            const updatedSessions = await prisma.session.findMany({ where: { attendanceId: attendanceRecord.id } });
+            const updatedSessions = await prisma.session.findMany({ 
+                where: { attendanceId: attendanceRecord.id },
+                orderBy: { clockInTime: 'asc' }
+            });
             const totalHours = parseFloat(updatedSessions.reduce((acc, s) => acc + (s.duration || 0), 0).toFixed(2));
             
             // Calculate extra hours
@@ -231,7 +255,7 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
                 }
             },
             orderBy: { date: 'desc' },
-            include: { sessions: true }
+            include: { sessions: { orderBy: { clockInTime: 'asc' } } }
         });
 
         if (!attendanceRecord) {
@@ -249,7 +273,7 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
                 data: {
                     employeeId: employee.id,
                     employeeName: employee.employeeName,
-                    organizationCode: employee.organizationCode,
+                    organizationCode: employee.organizationCode || '',
                     date: currentLocalTime,
                     wifiSSID,
                     wifiBSSID,
@@ -265,7 +289,7 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
                         }
                     }
                 },
-                include: { sessions: true }
+                include: { sessions: { orderBy: { clockInTime: 'asc' } } }
             });
 
             return res.status(200).json({ message: 'Clocked in successfully.', clockInTime: currentLocalTime, clockInRemark, finalRemark: 'Clocked In' });
@@ -696,38 +720,63 @@ router.get('/attendance/today', authenticateJWT, async (req, res) => {
             return res.status(404).json({ message: 'Employee not found.' });
         }
 
-        // Get today's date range
-        const startOfDay = moment().startOf('day').toDate();
-        const endOfDay = moment().endOf('day').toDate();
-
-        // Fetch the most recent attendance record
-        const attendanceRecord = await prisma.attendance.findFirst({
+        // 1. Check if there is an active unclosed session for this employee
+        const activeSession = await prisma.session.findFirst({
             where: {
-                employeeId: employee.id
+                clockOutTime: null,
+                attendance: {
+                    employeeId: employee.id
+                }
             },
-            orderBy: { date: 'desc' },
-            include: { sessions: true }
+            include: {
+                attendance: {
+                    include: { sessions: { orderBy: { clockInTime: 'asc' } } }
+                }
+            },
+            orderBy: { clockInTime: 'desc' }
         });
 
-        if (!attendanceRecord) {
-            return res.status(200).json({ message: 'No attendance record found for today.' });
+        let attendanceRecord = null;
+        let isLoggedIn = false;
+
+        if (activeSession) {
+            attendanceRecord = activeSession.attendance;
+            isLoggedIn = true;
+        } else {
+            // 2. If no active unclosed session, check for today's attendance record
+            const startOfDay = moment().tz('Asia/Kolkata').startOf('day').toDate();
+            const endOfDay = moment().tz('Asia/Kolkata').endOf('day').toDate();
+
+            attendanceRecord = await prisma.attendance.findFirst({
+                where: {
+                    employeeId: employee.id,
+                    date: {
+                        gte: startOfDay,
+                        lte: endOfDay
+                    }
+                },
+                orderBy: { date: 'desc' },
+                include: { sessions: { orderBy: { clockInTime: 'asc' } } }
+            });
         }
 
-        const isToday = attendanceRecord.date >= startOfDay && attendanceRecord.date <= endOfDay;
-        const hasOpenSession = attendanceRecord.sessions.some(session => !session.clockOutTime);
-
-        if (!isToday && !hasOpenSession) {
-            return res.status(200).json({ message: 'No attendance record found for today.' });
+        if (!attendanceRecord) {
+            return res.status(200).json({ 
+                isLoggedIn: false, 
+                hasActiveSession: false, 
+                message: 'No attendance record found for today.', 
+                attendance: null 
+            });
         }
 
         // Calculate total hours dynamically to include ongoing sessions
         let totalHours = 0;
-        if (attendanceRecord.sessions.length > 0) {
+        if (attendanceRecord.sessions && attendanceRecord.sessions.length > 0) {
             totalHours = attendanceRecord.sessions.reduce((sum, session) => {
                 let duration = session.duration || 0;
                 if (!session.clockOutTime && session.clockInTime) {
-                    const now = moment();
-                    const end = moment.min(now, moment(attendanceRecord.date).endOf('day'));
+                    const now = moment().tz('Asia/Kolkata');
+                    const end = moment.min(now, moment(attendanceRecord.date).tz('Asia/Kolkata').endOf('day'));
                     duration = Math.max(0, end.diff(moment(session.clockInTime)) / (1000 * 60 * 60));
                 }
                 return sum + duration;
@@ -735,11 +784,11 @@ router.get('/attendance/today', authenticateJWT, async (req, res) => {
         }
 
         // Extract clock-in and clock-out details
-        const firstSession = attendanceRecord.sessions.length > 0 ? attendanceRecord.sessions[0] : null;
-        const lastSession = attendanceRecord.sessions.length > 0 ? attendanceRecord.sessions[attendanceRecord.sessions.length - 1] : null;
+        const firstSession = attendanceRecord.sessions && attendanceRecord.sessions.length > 0 ? attendanceRecord.sessions[0] : null;
+        const lastSession = attendanceRecord.sessions && attendanceRecord.sessions.length > 0 ? attendanceRecord.sessions[attendanceRecord.sessions.length - 1] : null;
 
         // Format session details
-        const formattedSessions = attendanceRecord.sessions.map(session => ({
+        const formattedSessions = (attendanceRecord.sessions || []).map(session => ({
             clockInTime: session.clockInTime || 'Not clocked in',
             clockInRemark: session.clockInRemark || 'N/A',
             clockOutTime: session.clockOutTime || 'Not clocked out',
@@ -747,18 +796,24 @@ router.get('/attendance/today', authenticateJWT, async (req, res) => {
             duration: session.duration || 0,
         }));
 
+        const isLastSessionOpen = lastSession && !lastSession.clockOutTime;
+
         // Construct final response
         const formattedRecord = {
-            date: moment(attendanceRecord.date).tz('Asia/Kolkata').format('YYYY-MM-DD'), // YYYY-MM-DD format
+            date: moment(attendanceRecord.date).tz('Asia/Kolkata').format('YYYY-MM-DD'),
             clockInTime: firstSession?.clockInTime || 'Not clocked in',
             clockInRemark: firstSession?.clockInRemark || 'N/A',
-            clockOutTime: lastSession?.clockOutTime || 'Not clocked out',
+            clockOutTime: isLastSessionOpen ? 'Not clocked out' : (lastSession?.clockOutTime || 'Not clocked out'),
             clockOutRemark: lastSession?.clockOutRemark || 'N/A',
-            totalHours: totalHours,
-            sessions: formattedSessions, // Include all sessions
+            totalHours: parseFloat(totalHours.toFixed(2)),
+            sessions: formattedSessions,
         };
 
-        res.status(200).json({ attendance: formattedRecord });
+        res.status(200).json({ 
+            isLoggedIn: isLoggedIn || isLastSessionOpen,
+            hasActiveSession: isLoggedIn || isLastSessionOpen,
+            attendance: formattedRecord 
+        });
     } catch (error) {
         console.error('Error fetching today\'s attendance record:', error);
         res.status(500).json({ message: 'Server error', error: error.message });

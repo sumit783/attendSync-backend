@@ -95,22 +95,13 @@ router.post('/login', async (req, res) => {
         let user = employee;
 
         if (!user) {
-            const admin = await prisma.admin.findUnique({ 
+            const admin = await prisma.admin.findUnique({
                 where: { email },
-                include: { roles: { include: { organization: true } } }
+                include: { AdminRole: { include: { Organization: true } } }
             });
-            if (admin && admin.roles && admin.roles.length > 0) {
-                const org = admin.roles[0].organization;
-                if (org) {
-                    user = {
-                        ...org,
-                        id: admin.id,
-                        password: admin.password,
-                        isVerified: admin.isVerified,
-                        organizationEmail: admin.email,
-                    };
-                    userType = 'Organization';
-                }
+            if (admin) {
+                user = admin;
+                userType = 'Organization';
             }
         }
 
@@ -182,15 +173,17 @@ router.post('/login', async (req, res) => {
             }
         }
 
-        const token = jwt.sign({ id: user.id, email: user.employeeEmail || user.organizationEmail }, process.env.JWT_SECRET);
+        const token = jwt.sign({ id: user.id, email: user.employeeEmail || user.email }, process.env.JWT_SECRET);
+
+        const orgObj = userType === 'Employee' ? user.organization : (user.AdminRole?.[0]?.Organization || null);
 
         res.status(200).send({
             message: `${userType} login successful`,
             id: user.id,
             token,
-            organizationCode: user.organizationCode || null,
+            organizationCode: user.organizationCode || (orgObj?.organizationCode) || null,
             employee: userType === 'Employee' ? user : undefined,
-            organization: userType === 'Organization' ? user : undefined
+            organization: userType === 'Organization' ? orgObj : undefined
         });
     } catch(err) {
         console.error('Error in login:', err);
@@ -205,13 +198,13 @@ router.post('/verify-otp', async (req, res) => {
         const { email, otp, action } = req.body;
 
         const employee = await prisma.employee.findUnique({ where: { employeeEmail: email } });
-        const org = await prisma.organization.findUnique({ where: { organizationEmail: email } });
+        const admin = await prisma.admin.findUnique({ where: { email } });
 
-        const user = employee || org;
+        const user = employee || admin;
 
         if (!user) return res.status(400).send({ message: 'User not found' });
 
-        if (user.otp !== otp || user.otpExpires < new Date()) {
+        if (user.otp !== otp || !user.otpExpires || user.otpExpires < new Date()) {
             return res.status(400).send({ message: 'Invalid or expired OTP.' });
         }
 
@@ -222,12 +215,14 @@ router.post('/verify-otp', async (req, res) => {
                     data: { isVerified: true, otp: null, otpExpires: null }
                 });
                 
-                await prisma.organization.update({
-                    where: { id: user.organizationId },
-                    data: { employeeCount: { increment: 1 } }
-                });
+                if (user.organizationId) {
+                    await prisma.organization.update({
+                        where: { id: user.organizationId },
+                        data: { employeeCount: { increment: 1 } }
+                    });
+                }
             } else {
-                await prisma.organization.update({
+                await prisma.admin.update({
                     where: { id: user.id },
                     data: { isVerified: true, otp: null, otpExpires: null }
                 });
