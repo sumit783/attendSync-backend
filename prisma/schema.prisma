@@ -65,8 +65,8 @@ model Employee {
   AnnouncementReply    AnnouncementReply[]
   attendances          Attendance[]
   regularizations      AttendanceRegularization[]
-  CustomRole           CustomRole?                @relation(fields: [customRoleId], references: [id])
-  Department           Department?                @relation(fields: [departmentId], references: [id])
+  customRole           CustomRole?                @relation(fields: [customRoleId], references: [id])
+  department           Department?                @relation(fields: [departmentId], references: [id])
   organization         Organization               @relation(fields: [organizationId], references: [id])
   shift                Shift?                     @relation(fields: [shiftId], references: [id])
   EmployeeAnnouncement EmployeeAnnouncement[]
@@ -76,7 +76,7 @@ model Employee {
   leaves               Leave[]
   notifications        Notification[]
   Task                 Task[]
-  Designation          Designation[]
+  designations         Designation[]
 
   @@index([organizationCode])
   @@index([customRoleId], map: "Employee_customRoleId_fkey")
@@ -330,8 +330,8 @@ model CustomRole {
   reportPageAccess               Boolean      @default(false)
   createdAt                      DateTime     @default(now())
   updatedAt                      DateTime
-  Organization                   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  Employee                       Employee[]
+  organization                   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employees                      Employee[]
 
   @@index([organizationId])
 }
@@ -342,9 +342,9 @@ model Department {
   organizationId String
   createdAt      DateTime      @default(now())
   updatedAt      DateTime
-  Organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  Designation    Designation[]
-  Employee       Employee[]
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  designations   Designation[]
+  employees      Employee[]
 
   @@index([organizationId])
 }
@@ -356,9 +356,9 @@ model Designation {
   organizationId String
   createdAt      DateTime     @default(now())
   updatedAt      DateTime
-  Department     Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
-  Organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  Employee       Employee[]
+  department     Department   @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  employees      Employee[]
 
   @@index([departmentId])
   @@index([organizationId])
