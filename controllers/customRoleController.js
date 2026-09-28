@@ -1,4 +1,4 @@
-﻿const prisma = require('../prisma/client');
+const prisma = require('../prisma/client');
 
 exports.createCustomRole = async (req, res) => {
     try {
@@ -49,13 +49,21 @@ exports.getCustomRoles = async (req, res) => {
             where: { organizationId },
             include: {
                 _count: {
-                    select: { employees: true }
+                    select: { Employee: true }
                 }
             },
             orderBy: { createdAt: 'desc' }
         });
 
-        res.status(200).send({ customRoles });
+        const formatted = customRoles.map(cr => ({
+            ...cr,
+            _count: {
+                ...cr._count,
+                employees: cr._count?.Employee ?? 0
+            }
+        }));
+
+        res.status(200).send({ customRoles: formatted });
     } catch (error) {
         console.error('Error fetching custom roles:', error);
         res.status(500).send({ message: 'Internal server error', error: error.message });
