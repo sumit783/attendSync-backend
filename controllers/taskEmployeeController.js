@@ -56,7 +56,10 @@ exports.updateTaskStatus = async (req, res) => {
 
         const updatedTask = await prisma.task.update({
             where: { id },
-            data: { status }
+            data: { 
+                status,
+                updatedAt: new Date()
+            }
         });
 
         res.status(200).send({ message: 'Task status updated successfully.', task: updatedTask });

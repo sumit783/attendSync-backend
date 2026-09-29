@@ -1,4 +1,5 @@
 const prisma = require('../prisma/client');
+const { randomUUID } = require('crypto');
 const createNotification = require('../Helpers/CreateNotification.js');
 
 exports.createTask = async (req, res) => {
@@ -22,12 +23,14 @@ exports.createTask = async (req, res) => {
 
         const task = await prisma.task.create({
             data: {
+                id: randomUUID(),
                 title,
-                description,
+                description: description || null,
                 status: 'PENDING',
                 employeeId,
                 organizationId,
-                assignedById: adminId || null
+                assignedById: adminId || null,
+                updatedAt: new Date()
             }
         });
 
@@ -36,7 +39,7 @@ exports.createTask = async (req, res) => {
             employeeId, 
             organizationId, 
             `New task assigned: ${title}`, 
-            'TASK_ASSIGNED', 
+            'Reminder', 
             null, 
             'Employee'
         );
@@ -60,14 +63,20 @@ exports.getTasks = async (req, res) => {
         const tasks = await prisma.task.findMany({
             where: whereClause,
             include: {
-                employee: {
-                    select: { id: true, employeeName: true, profilePic: true }
+                Employee: {
+                    select: { id: true, employeeName: true, profilePic: true, employeeEmail: true }
                 }
             },
             orderBy: { createdAt: 'desc' }
         });
 
-        res.status(200).send({ tasks });
+        const formattedTasks = tasks.map(t => ({
+            ...t,
+            employee: t.Employee,
+            Employee: t.Employee
+        }));
+
+        res.status(200).send({ tasks: formattedTasks });
     } catch (error) {
         console.error('Error fetching tasks:', error);
         res.status(500).send({ message: 'Internal server error', error: error.message });
@@ -103,7 +112,8 @@ exports.updateTask = async (req, res) => {
                 ...(title && { title }),
                 ...(description !== undefined && { description }),
                 ...(status && { status }),
-                ...(employeeId && { employeeId })
+                ...(employeeId && { employeeId }),
+                updatedAt: new Date()
             }
         });
 
