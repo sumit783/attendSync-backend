@@ -1,5 +1,6 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const moment = require('moment-timezone');
 const prisma = require('../prisma/client');
 const authenticateJWT = require('../middleware/authenticateJWT');
 const authenticateAdmin = require('../middleware/authenticateAdmin');
@@ -11,8 +12,10 @@ router.post('/employee', authenticateJWT, async (req, res) => {
     // #swagger.tags = ['Attendance and Employee Management']
 
     try {
-        const token = req.headers.authorization.split(' ')[1];
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const employeeId = req.user?.id || (req.headers.authorization ? jwt.verify(req.headers.authorization.split(' ')[1], process.env.JWT_SECRET)?.id : null);
+        if (!employeeId) {
+            return res.status(401).send({ message: 'Unauthorized' });
+        }
 
         const { attendanceDate, requestType, requestedCheckIn, requestedCheckOut, requestedCheckInDate, requestedCheckOutDate, reason, attachment } = req.body;
 
@@ -20,11 +23,15 @@ router.post('/employee', authenticateJWT, async (req, res) => {
             return res.status(400).send({ message: 'Attendance date, request type, and reason are required.' });
         }
 
-        const employee = await prisma.employee.findUnique({ where: { id: decoded.id } });
+        const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
         if (!employee) return res.status(404).send({ message: 'Employee not found.' });
 
-        const dateObj = new Date(attendanceDate);
-        if (dateObj > new Date()) {
+        const dateStr = moment(attendanceDate).tz('Asia/Kolkata').format('YYYY-MM-DD');
+        const startOfDay = moment.tz(dateStr, 'YYYY-MM-DD', 'Asia/Kolkata').startOf('day').toDate();
+        const endOfDay = moment.tz(dateStr, 'YYYY-MM-DD', 'Asia/Kolkata').endOf('day').toDate();
+
+        const todayEnd = moment().tz('Asia/Kolkata').endOf('day').toDate();
+        if (startOfDay > todayEnd) {
             return res.status(400).send({ message: 'Cannot regularize future dates.' });
         }
 
@@ -32,7 +39,7 @@ router.post('/employee', authenticateJWT, async (req, res) => {
         const existingRequest = await prisma.attendanceRegularization.findFirst({
             where: {
                 employeeId: employee.id,
-                attendanceDate: dateObj,
+                attendanceDate: { gte: startOfDay, lte: endOfDay },
                 status: 'Pending'
             }
         });
@@ -41,18 +48,24 @@ router.post('/employee', authenticateJWT, async (req, res) => {
             return res.status(400).send({ message: 'A pending regularization request already exists for this date.' });
         }
 
+        const parseDateSafe = (d) => {
+            if (!d) return null;
+            const parsed = new Date(d);
+            return isNaN(parsed.getTime()) ? null : parsed;
+        };
+
         const request = await prisma.attendanceRegularization.create({
             data: {
                 employeeId: employee.id,
-                organizationCode: employee.organizationCode,
-                attendanceDate: dateObj,
+                organizationCode: employee.organizationCode || '',
+                attendanceDate: startOfDay,
                 requestType,
-                requestedCheckIn,
-                requestedCheckOut,
-                requestedCheckInDate: requestedCheckInDate ? new Date(requestedCheckInDate) : null,
-                requestedCheckOutDate: requestedCheckOutDate ? new Date(requestedCheckOutDate) : null,
+                requestedCheckIn: requestedCheckIn || null,
+                requestedCheckOut: requestedCheckOut || null,
+                requestedCheckInDate: parseDateSafe(requestedCheckInDate),
+                requestedCheckOutDate: parseDateSafe(requestedCheckOutDate),
                 reason,
-                attachment
+                attachment: attachment || null
             }
         });
 
@@ -107,8 +120,6 @@ router.get('/admin', authenticateAdmin, requireOrganizationAccess, async (req, r
         res.status(500).send({ message: 'Server error', error: error.message });
     }
 });
-
-const moment = require('moment-timezone');
 
 // ================== Admin: Approve Regularization Request ==================
 router.put('/admin/:id/approve', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
