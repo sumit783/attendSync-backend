@@ -942,13 +942,34 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
         const endOfDay = moment.tz(selectedDate, 'YYYY-MM-DD', 'Asia/Kolkata').endOf('day').toDate();
 
         // Fetch attendance record for the selected date
-        const attendanceRecord = await prisma.attendance.findFirst({
+        let attendanceRecord = await prisma.attendance.findFirst({
             where: {
                 employeeId: employee.id,
                 date: { gte: startOfDay, lte: endOfDay }
             },
-            include: { sessions: true }
+            orderBy: { date: 'desc' },
+            include: { sessions: { orderBy: { clockInTime: 'asc' } } }
         });
+
+        // Fallback: Check if there is an active session or attendance record today if requested date is today
+        const todayDateStr = moment().tz('Asia/Kolkata').format('YYYY-MM-DD');
+        if (!attendanceRecord && selectedDate === todayDateStr) {
+            const activeSession = await prisma.session.findFirst({
+                where: {
+                    clockOutTime: null,
+                    attendance: { employeeId: employee.id }
+                },
+                include: {
+                    attendance: {
+                        include: { sessions: { orderBy: { clockInTime: 'asc' } } }
+                    }
+                },
+                orderBy: { clockInTime: 'desc' }
+            });
+            if (activeSession) {
+                attendanceRecord = activeSession.attendance;
+            }
+        }
 
         if (!attendanceRecord) {
             return res.status(200).json({ message: `No attendance record found for ${selectedDate}.` });
@@ -956,8 +977,12 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
 
         // Calculate total hours dynamically to include ongoing sessions
         let totalHours = 0;
-        if (attendanceRecord.sessions.length > 0) {
-            totalHours = attendanceRecord.sessions.reduce((sum, session) => {
+        const sessions = attendanceRecord.sessions && attendanceRecord.sessions.length > 0
+            ? [...attendanceRecord.sessions].sort((a, b) => new Date(a.clockInTime) - new Date(b.clockInTime))
+            : [];
+
+        if (sessions.length > 0) {
+            totalHours = sessions.reduce((sum, session) => {
                 let duration = session.duration || 0;
                 if (!session.clockOutTime && session.clockInTime) {
                     const now = moment().tz('Asia/Kolkata');
@@ -969,10 +994,10 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
 
         // Calculate Break Time
         let breakTime = 0;
-        if (attendanceRecord.sessions.length > 1) {
-            for (let i = 0; i < attendanceRecord.sessions.length - 1; i++) {
-                const currentSession = attendanceRecord.sessions[i];
-                const nextSession = attendanceRecord.sessions[i + 1];
+        if (sessions.length > 1) {
+            for (let i = 0; i < sessions.length - 1; i++) {
+                const currentSession = sessions[i];
+                const nextSession = sessions[i + 1];
                 if (currentSession.clockOutTime && nextSession.clockInTime) {
                     const gap = moment(nextSession.clockInTime).diff(moment(currentSession.clockOutTime));
                     if (gap > 0) breakTime += gap / (1000 * 60 * 60); // Convert to hours
@@ -988,8 +1013,8 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
         }
 
         // Extract first and last session details
-        const firstSession = attendanceRecord.sessions.length > 0 ? attendanceRecord.sessions[0] : null;
-        const lastSession = attendanceRecord.sessions.length > 0 ? attendanceRecord.sessions[attendanceRecord.sessions.length - 1] : null;
+        const firstSession = sessions.length > 0 ? sessions[0] : null;
+        const lastSession = sessions.length > 0 ? sessions[sessions.length - 1] : null;
 
         // Determine Status
         let status = 'Absent';
@@ -1013,7 +1038,7 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
         }
 
         // Format session details
-        const formattedSessions = attendanceRecord.sessions.map(session => ({
+        const formattedSessions = sessions.map(session => ({
             clockInTime: session.clockInTime || 'Not clocked in',
             clockInRemark: session.clockInRemark || 'N/A',
             clockOutTime: session.clockOutTime || 'Not clocked out',
@@ -1021,16 +1046,21 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
             duration: session.duration || 0,
         }));
 
+        // Find last completed clock out time if lastSession is open or null
+        const lastClockOutSession = [...sessions].reverse().find(s => s.clockOutTime);
+        const resolvedClockOutTime = lastSession?.clockOutTime || (lastClockOutSession ? lastClockOutSession.clockOutTime : 'Not clocked out');
+        const resolvedClockOutRemark = lastSession?.clockOutRemark || (lastClockOutSession ? lastClockOutSession.clockOutRemark : 'N/A');
+
         // Construct final response
         const formattedRecord = {
             date: selectedDate,
             clockInTime: firstSession?.clockInTime || 'Not clocked in',
             clockInRemark: firstSession?.clockInRemark || 'N/A',
-            clockOutTime: lastSession?.clockOutTime || 'Not clocked out',
-            clockOutRemark: lastSession?.clockOutRemark || 'N/A',
-            totalHours: totalHours,
-            breakTime: breakTime,
-            overtime: overtime,
+            clockOutTime: resolvedClockOutTime,
+            clockOutRemark: resolvedClockOutRemark,
+            totalHours: parseFloat(totalHours.toFixed(2)),
+            breakTime: parseFloat(breakTime.toFixed(2)),
+            overtime: parseFloat(overtime.toFixed(2)),
             status: status,
             finalRemark: attendanceRecord.finalRemark,
             regularized: attendanceRecord.regularized,
@@ -1039,7 +1069,7 @@ router.get('/attendance/:date', authenticateJWT, async (req, res) => {
 
         res.status(200).json({ attendance: formattedRecord });
     } catch (error) {
-        console.error('Error fetching attendance record rrrrrrrr:', error);
+        console.error('Error fetching attendance record:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 });
