@@ -25,15 +25,19 @@ exports.getOverviewStats = async (req, res) => {
     const nextDate = new Date(currentDate);
     nextDate.setDate(nextDate.getDate() + 1);
 
-    // Run all three DB queries in parallel
+    // Run all DB queries in parallel (only count active employees, excluding deleted/inactive)
     const [totalEmployees, attendances] = await Promise.all([
       prisma.employee.count({
-        where: { organizationCode: organization.organizationCode }
+        where: {
+          organizationCode: organization.organizationCode,
+          status: 'active'
+        }
       }),
       prisma.attendance.findMany({
         where: {
           organizationCode: organization.organizationCode,
-          date: { gte: currentDate, lt: nextDate }
+          date: { gte: currentDate, lt: nextDate },
+          employee: { status: 'active' }
         },
         select: {
           sessions: {
@@ -100,9 +104,12 @@ exports.getPayrollDistribution = async (req, res) => {
 
     if (!organization) return res.status(404).json({ message: 'Organization not found' });
 
-    // Use select instead of include — only fetch what we need
+    // Use select instead of include — only fetch active employees
     const employees = await prisma.employee.findMany({
-      where: { organizationCode: organization.organizationCode },
+      where: {
+        organizationCode: organization.organizationCode,
+        status: 'active'
+      },
       select: {
         salary: true,
         department: { select: { name: true } }
@@ -115,7 +122,7 @@ exports.getPayrollDistribution = async (req, res) => {
     employees.forEach(emp => {
       const deptName = emp.department?.name || 'General';
       const rawSal = Number(emp.salary ?? 0);
-      const sal = isNaN(rawSal) || rawSal <= 0 ? 30000 : rawSal;
+      const sal = isNaN(rawSal) || rawSal <= 0 ? 0 : rawSal;
 
       totalMonthlyPayroll += sal;
 
