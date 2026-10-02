@@ -535,7 +535,15 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
                     organizationCode: employee.organizationCode,
                     date: { gte: currentMonthStart.toDate(), lte: currentMonthEnd.toDate() }
                 },
-                select: { finalRemark: true, totalHours: true, extraHours: true, date: true }
+                select: { 
+                    finalRemark: true, 
+                    totalHours: true, 
+                    extraHours: true, 
+                    date: true,
+                    sessions: {
+                        select: { clockInTime: true, clockOutTime: true, duration: true }
+                    }
+                }
             }),
             prisma.organization.findUnique({
                 where: { id: employee.organizationId },
@@ -573,9 +581,20 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
                     actualWorkingDays++;
                 }
             }
-            const dayTotal = Math.max(0, a.totalHours || 0);
-            const dayExtra = Math.max(0, a.extraHours || 0);
-            completedWorkingHours += dayTotal + dayExtra;
+            let dayTotal = 0;
+            if (a.sessions && a.sessions.length > 0) {
+                dayTotal = a.sessions.reduce((sum, s) => {
+                    let duration = s.duration || 0;
+                    if (!s.clockOutTime && s.clockInTime) {
+                        const now = moment().tz('Asia/Kolkata');
+                        duration = Math.max(0, now.diff(moment(s.clockInTime)) / (1000 * 60 * 60));
+                    }
+                    return sum + duration;
+                }, 0);
+            } else {
+                dayTotal = Math.max(0, a.totalHours || 0);
+            }
+            completedWorkingHours += dayTotal;
         }
 
         let currentDay = currentMonthStart.clone();
