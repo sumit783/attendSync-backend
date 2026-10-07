@@ -62,6 +62,10 @@ model Employee {
   departmentId         String?
   customRoleId         String?
   salary               Float?                     @default(0)
+  autoAttendance       Boolean                    @default(false)
+  autoLoginTime        String?
+  autoLogoutTime       String?
+  autoLogoutNextDay    Boolean                    @default(false)
   AnnouncementReply    AnnouncementReply[]
   attendances          Attendance[]
   regularizations      AttendanceRegularization[]
