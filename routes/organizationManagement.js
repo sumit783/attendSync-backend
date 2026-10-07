@@ -10,6 +10,7 @@ const moment = require('moment-timezone');
 const cache = require('../utils/cache');
 
 const router = express.Router();
+const { processAutoAttendance } = require('../Handlers/cronJobs');
 
 // ================== Register Office Wi-Fi ==================
 router.post('/office-wifi', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
@@ -427,7 +428,11 @@ router.post('/employees', authenticateAdmin, requireOrganizationAccess, async (r
       departmentId, 
       designationIds, 
       customRoleId,
-      salary
+      salary,
+      autoAttendance,
+      autoLoginTime,
+      autoLogoutTime,
+      autoLogoutNextDay
     } = req.body;
 
     if (!employeeName || !employeeEmail || !password) {
@@ -465,6 +470,10 @@ router.post('/employees', authenticateAdmin, requireOrganizationAccess, async (r
         departmentId: departmentId || null,
         customRoleId: customRoleId || null,
         salary: salary ? parseFloat(salary) : 0,
+        autoAttendance: autoAttendance !== undefined ? Boolean(autoAttendance) : false,
+        autoLoginTime: autoLoginTime || null,
+        autoLogoutTime: autoLogoutTime || null,
+        autoLogoutNextDay: autoLogoutNextDay !== undefined ? Boolean(autoLogoutNextDay) : false,
         designations: designationIds && designationIds.length > 0 ? {
           connect: designationIds.map(id => ({ id }))
         } : undefined,
@@ -633,7 +642,11 @@ const updateEmployeeHandler = async (req, res) => {
       customRoleId,
       designationIds,
       profilePic,
-      isVerified
+      isVerified,
+      autoAttendance,
+      autoLoginTime,
+      autoLogoutTime,
+      autoLogoutNextDay
     } = req.body;
 
     // Check if email is changing and already in use
@@ -658,6 +671,10 @@ const updateEmployeeHandler = async (req, res) => {
     if (profilePic !== undefined) updateData.profilePic = profilePic;
     if (salary !== undefined) updateData.salary = salary !== null ? parseFloat(salary) : 0;
     if (isVerified !== undefined) updateData.isVerified = Boolean(isVerified);
+    if (autoAttendance !== undefined) updateData.autoAttendance = Boolean(autoAttendance);
+    if (autoLoginTime !== undefined) updateData.autoLoginTime = autoLoginTime || null;
+    if (autoLogoutTime !== undefined) updateData.autoLogoutTime = autoLogoutTime || null;
+    if (autoLogoutNextDay !== undefined) updateData.autoLogoutNextDay = Boolean(autoLogoutNextDay);
 
     if (shiftId !== undefined) {
       updateData.shiftId = shiftId || null;
@@ -2569,3 +2586,17 @@ router.patch('/expenses/:id/status', authenticateAdmin, requireOrganizationAcces
 module.exports = router;
 
 
+
+// ================== Trigger Auto Attendance Manually ==================
+router.post('/trigger-auto-attendance', authenticateAdmin, requireOrganizationAccess, async (req, res) => {
+  try {
+    const result = await processAutoAttendance();
+    res.status(200).send({
+      message: 'Auto attendance processed successfully',
+      result
+    });
+  } catch (error) {
+    console.error('Error triggering auto attendance:', error);
+    res.status(500).send({ message: 'Server error', error: error.message });
+  }
+});
