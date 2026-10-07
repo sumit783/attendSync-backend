@@ -708,6 +708,10 @@ router.get('/employees', async (req, res) => {
                 profilePic: true,
                 salary: true,
                 status: true,
+                autoAttendance: true,
+                autoLoginTime: true,
+                autoLogoutTime: true,
+                autoLogoutNextDay: true,
                 organizationId: true,
                 organizationCode: true,
                 organization: {
