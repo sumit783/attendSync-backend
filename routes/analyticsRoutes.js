@@ -92,7 +92,7 @@ router.get('/companies', authenticateAdmin, async (req, res) => {
         for (const a of attendances) {
             if (!attByEmp[a.employeeId]) attByEmp[a.employeeId] = { total: 0, present: 0 };
             attByEmp[a.employeeId].total += 1;
-            if (['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early'].includes(a.finalRemark)) {
+            if (['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early', 'Late Logout', 'Late & Late Logout'].includes(a.finalRemark)) {
                 attByEmp[a.employeeId].present += 1;
             }
         }
@@ -237,7 +237,7 @@ router.get('/performance-trend', authenticateAdmin, async (req, res) => {
             });
             
             const totalAttendances = attendances.length;
-            const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early'];
+            const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early', 'Late Logout', 'Late & Late Logout'];
             const presentCount = attendances.filter(a => PRESENT_REMARKS.includes(a.finalRemark)).length;
             
             const attendanceScore = totalAttendances > 0 ? (presentCount / totalAttendances) * 40 : 35; 
@@ -301,7 +301,7 @@ router.get('/stats', authenticateAdmin, async (req, res) => {
         const totalPayroll = employees.reduce((sum, emp) => sum + (emp.salary || 0), 0);
         const avgSalary = totalEmployees > 0 ? Math.round(totalPayroll / totalEmployees) : 0;
         
-        const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early'];
+        const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early', 'Late Logout', 'Late & Late Logout'];
         const totalAtt = attendances.length;
         const presentAtt = attendances.filter(a => PRESENT_REMARKS.includes(a.finalRemark)).length;
         const attendanceRate = totalAtt > 0 ? Math.round((presentAtt / totalAtt) * 100) : 0;
@@ -348,7 +348,7 @@ router.get('/comparison', authenticateAdmin, async (req, res) => {
         for (const a of attendances) {
             if (!attByEmp[a.employeeId]) attByEmp[a.employeeId] = { total: 0, present: 0 };
             attByEmp[a.employeeId].total += 1;
-            if (['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early'].includes(a.finalRemark)) {
+            if (['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early', 'Late Logout', 'Late & Late Logout'].includes(a.finalRemark)) {
                 attByEmp[a.employeeId].present += 1;
             }
         }
@@ -466,7 +466,7 @@ router.get('/attendance-pie', authenticateAdmin, async (req, res) => {
         for (const a of attendances) {
             if (!attByEmp[a.employeeId]) attByEmp[a.employeeId] = { total: 0, present: 0 };
             attByEmp[a.employeeId].total += 1;
-            if (['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early'].includes(a.finalRemark)) {
+            if (['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized', 'On Time', 'Late', 'Early Login', 'Late & Left Early', 'Late Logout', 'Late & Late Logout'].includes(a.finalRemark)) {
                 attByEmp[a.employeeId].present += 1;
             }
         }

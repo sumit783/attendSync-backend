@@ -107,7 +107,7 @@ router.get("/kpis", async (req, res) => {
             where: {
                 employee: { organizationId: { in: targetOrgIds } },
                 date: { gte: start, lte: end },
-                finalRemark: { in: ["Present", "Half Day", "Clocked In", "Regularized", "Left Early"] }
+                finalRemark: { in: ["Present", "Half Day", "Clocked In", "Regularized", "Left Early", "Late & Left Early", "Late Logout", "Late & Late Logout", "On Time", "Late", "Early Login"] }
             }
         });
 
@@ -167,7 +167,7 @@ router.get("/attendance-trend", async (req, res) => {
             where: {
                 employee: { organizationId: { in: targetOrgIds } },
                 date: { gte: start.toDate(), lte: end.toDate() },
-                finalRemark: { in: ["Present", "Half Day", "Clocked In", "Regularized", "Left Early"] }
+                finalRemark: { in: ["Present", "Half Day", "Clocked In", "Regularized", "Left Early", "Late & Left Early", "Late Logout", "Late & Late Logout", "On Time", "Late", "Early Login"] }
             }
         });
 
@@ -227,7 +227,7 @@ router.get("/company-rates", async (req, res) => {
                 where: {
                     employee: { organizationId: org.id },
                     date: { gte: start, lte: end },
-                    finalRemark: { in: ["Present", "Half Day", "Clocked In", "Regularized", "Left Early"] }
+                    finalRemark: { in: ["Present", "Half Day", "Clocked In", "Regularized", "Left Early", "Late & Left Early", "Late Logout", "Late & Late Logout", "On Time", "Late", "Early Login"] }
                 }
             });
 

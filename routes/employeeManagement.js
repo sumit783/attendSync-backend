@@ -202,14 +202,42 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             const attendanceRecord = activeSession.attendance;
             const lastSession = activeSession;
             
+            // Base the shift timings on the date when the session/attendance started
+            const sessionBaseDate = moment(attendanceRecord?.date || lastSession.clockInTime).tz('Asia/Kolkata').format('YYYY-MM-DD');
+
+            const parseSessionTime = (timeStr, defaultHour, defaultMinute) => {
+                if (!timeStr) {
+                    return moment.tz(sessionBaseDate, 'YYYY-MM-DD', 'Asia/Kolkata').hour(defaultHour).minute(defaultMinute).second(0).millisecond(0);
+                }
+                const formats = ['HH:mm', 'hh:mm A', 'h:mm A', 'H:mm', 'HH:mm:ss', 'hh:mm:ss A'];
+                for (const fmt of formats) {
+                    const parsed = moment.tz(`${sessionBaseDate} ${timeStr}`, `YYYY-MM-DD ${fmt}`, 'Asia/Kolkata');
+                    if (parsed.isValid()) return parsed;
+                }
+                return moment.tz(sessionBaseDate, 'YYYY-MM-DD', 'Asia/Kolkata').hour(defaultHour).minute(defaultMinute).second(0).millisecond(0);
+            };
+
+            let sessionShiftStart = parseSessionTime(inTimeStr, 9, 0);
+            let sessionShiftEnd = parseSessionTime(outTimeStr, 18, 0);
+
+            if (sessionShiftEnd.isBefore(sessionShiftStart)) {
+                // Overnight shift: shiftEnd is on the next calendar day
+                sessionShiftEnd.add(1, 'day');
+            }
+
+            const sessionOrgInTime = sessionShiftStart.utc().toDate();
+            const sessionOrgOutTime = sessionShiftEnd.utc().toDate();
+
             const diffMs = moment(currentLocalTime).diff(moment(lastSession.clockInTime));
             const duration = Math.max(0.01, parseFloat((diffMs / (1000 * 60 * 60)).toFixed(2)));
             
             let clockOutRemark = 'Present';
-            if (moment(currentLocalTime).isSame(moment(organizationOutTime), 'minute')) {
+            if (moment(currentLocalTime).isSame(moment(sessionOrgOutTime), 'minute')) {
                 clockOutRemark = 'On Time';
-            } else if (moment(currentLocalTime).isBefore(moment(organizationOutTime))) {
+            } else if (moment(currentLocalTime).isBefore(moment(sessionOrgOutTime))) {
                 clockOutRemark = 'Left Early';
+            } else if (moment(currentLocalTime).isAfter(moment(sessionOrgOutTime))) {
+                clockOutRemark = 'Late Logout';
             }
 
             await prisma.session.update({
@@ -228,7 +256,7 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             const totalHours = parseFloat(updatedSessions.reduce((acc, s) => acc + (s.duration || 0), 0).toFixed(2));
             
             // Calculate extra hours
-            const expectedDurationMs = moment(organizationOutTime).diff(moment(organizationInTime));
+            const expectedDurationMs = moment(sessionOrgOutTime).diff(moment(sessionOrgInTime));
             const expectedHours = expectedDurationMs > 0 ? expectedDurationMs / (1000 * 60 * 60) : 0;
             let extraHours = 0;
             if (expectedHours > 0 && totalHours > expectedHours) {
@@ -242,16 +270,21 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
             const firstSession = updatedSessions[0];
             const isLate = firstSession?.clockInRemark === 'Late';
             const isEarlyLogout = clockOutRemark === 'Left Early';
+            const isLateLogout = clockOutRemark === 'Late Logout';
 
             let finalRemark = 'Present';
             if (totalHours < halfShiftHours) {
                 finalRemark = 'Half Day';
             } else if (isLate && isEarlyLogout) {
                 finalRemark = 'Late & Left Early';
+            } else if (isLate && isLateLogout) {
+                finalRemark = 'Late & Late Logout';
             } else if (isLate) {
                 finalRemark = 'Late';
             } else if (isEarlyLogout) {
                 finalRemark = 'Left Early';
+            } else if (isLateLogout) {
+                finalRemark = 'Late Logout';
             } else if (firstSession?.clockInRemark === 'Early Login') {
                 finalRemark = 'Early Login';
             } else {
@@ -263,7 +296,14 @@ router.post('/clock-in-out', authenticateJWT, async (req, res) => {
                 data: { totalHours, extraHours, finalRemark }
             });
 
-            return res.status(200).json({ message: 'Clocked out successfully.', clockOutTime: currentLocalTime, totalHours, extraHours, finalRemark });
+            return res.status(200).json({ 
+                message: 'Clocked out successfully.', 
+                clockOutTime: currentLocalTime, 
+                clockOutRemark, 
+                totalHours, 
+                extraHours, 
+                finalRemark 
+            });
         }
 
         // 2. If no active session, it is a clock-in: check if an attendance record exists for today / current shift
@@ -458,6 +498,8 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
             halfDayDates: [],
             leftEarlyDates: [],
             lateAndLeftEarlyDates: [],
+            lateLogoutDates: [],
+            lateAndLateLogoutDates: [],
             absentDates: [],
             leaveDates: Array.from(leaveDates),
             holidayDates: Array.from(holidayDatesSet),
@@ -469,7 +511,8 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
 
         const PRESENT_LIKE_REMARKS = [
             'Present', 'Half Day', 'Left Early', 'Late & Left Early', 
-            'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time'
+            'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time',
+            'Late Logout', 'Late & Late Logout'
         ];
 
         allDates.forEach(date => {
@@ -487,6 +530,12 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
                     result.leftEarlyDates.push(date);
                 } else if (att.finalRemark === 'Left Early') {
                     result.leftEarlyDates.push(date);
+                } else if (att.finalRemark === 'Late & Late Logout') {
+                    result.lateAndLateLogoutDates.push(date);
+                    result.lateDates.push(date);
+                    result.lateLogoutDates.push(date);
+                } else if (att.finalRemark === 'Late Logout') {
+                    result.lateLogoutDates.push(date);
                 } else if (att.finalRemark === 'Early Login' || att.remark === 'Early Login') {
                     result.earlyLoginDates.push(date);
                 } else if (att.finalRemark === 'Late' || att.remark === 'Late') {
@@ -574,7 +623,7 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
         let actualWorkingDays = 0;
         let completedWorkingHours = 0;
 
-        const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Late & Left Early', 'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time'];
+        const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Late & Left Early', 'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time', 'Late Logout', 'Late & Late Logout'];
         for (const a of attendances) {
             if (PRESENT_REMARKS.includes(a.finalRemark)) {
                 if (moment(a.date).isSameOrBefore(today, 'day')) {
@@ -1574,7 +1623,7 @@ router.get('/performance-report', authenticateJWT, async (req, res) => {
       m.add(1, 'month');
     }
 
-    const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Late & Left Early', 'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time'];
+    const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Late & Left Early', 'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time', 'Late Logout', 'Late & Late Logout'];
     let totalHoursAll = 0;
     let totalOvertimeAll = 0;
     let lateArrivals = 0;
