@@ -84,7 +84,7 @@ router.get('/stats', async (req, res) => {
             where: {
                 organizationCode: { in: orgCodes },
                 date: { gte: today, lte: endOfToday },
-                finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] }
+                finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early', 'Late & Left Early', 'Late Logout', 'Late & Late Logout', 'On Time', 'Late', 'Early Login'] }
             },
             select: { employeeId: true, organizationCode: true }
         });
@@ -150,7 +150,7 @@ router.get('/attendance-by-company', async (req, res) => {
                 where: {
                     organizationCode: { in: orgCodes },
                     date: { gte: today, lte: endOfToday },
-                    finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] }
+                    finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early', 'Late & Left Early', 'Late Logout', 'Late & Late Logout', 'On Time', 'Late', 'Early Login'] }
                 },
                 select: { employeeId: true, organizationCode: true }
             }),
@@ -473,7 +473,7 @@ router.get('/alerts', async (req, res) => {
                 where: {
                     organizationCode: { in: orgCodes },
                     date: { gte: today, lte: endOfToday },
-                    finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early'] }
+                    finalRemark: { in: ['Present', 'Half Day', 'Clocked In', 'Regularized', 'Left Early', 'Late & Left Early', 'Late Logout', 'Late & Late Logout', 'On Time', 'Late', 'Early Login'] }
                 }
             }),
             prisma.leave.groupBy({
