@@ -487,7 +487,31 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
         });
         const allDates = new Set([...allAttendanceDates, ...leaveDates, ...pendingRegularizeSet, ...holidayDatesSet]);
 
+        // Ensure past working days of the current month are evaluated for unrecorded absences
+        const now = moment().tz('Asia/Kolkata');
+        const currentMonthStart = now.clone().startOf('month');
+        const today = now.clone().startOf('day');
+        const yesterday = today.clone().subtract(1, 'day');
+        const weekOffNames = employee.shift && employee.shift.weekOffs 
+            ? employee.shift.weekOffs.split(',').map(d => d.trim().toLowerCase()) 
+            : [];
+
+        let cur = currentMonthStart.clone();
+        while (cur.isSameOrBefore(yesterday, 'day')) {
+            const dateStr = cur.format('YYYY-MM-DD');
+            const dayName = cur.format('dddd').toLowerCase();
+            if (!weekOffNames.includes(dayName) && !holidayDatesSet.has(dateStr)) {
+                allDates.add(dateStr);
+            }
+            cur.add(1, 'day');
+        }
+
         // Step 5: Categorize dates
+        const PRESENT_REMARKS = [
+            'Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized',
+            'On Time', 'Late', 'Early Login', 'Late & Left Early', 'Late Logout', 'Late & Late Logout'
+        ];
+
         const result = {
             employeeId,
             employeeName: employee.employeeName,
@@ -517,30 +541,35 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
 
         allDates.forEach(date => {
             const att = attendanceMap[date];
+            const hasAtt = att && (PRESENT_REMARKS.includes(att.finalRemark) || (att.finalRemark && att.finalRemark !== 'Absent'));
+
             if (pendingRegularizeSet.has(date)) {
                 result.pendingRegularizeDates.push(date);
-            } else if (att && (PRESENT_LIKE_REMARKS.includes(att.finalRemark) || (att.finalRemark && att.finalRemark !== 'Absent'))) {
-                if (att.finalRemark === 'Regularized') {
+            }
+
+            if (hasAtt) {
+                const remark = att.finalRemark || att.remark;
+                if (remark === 'Regularized') {
                     result.regularizedDates.push(date);
-                } else if (att.finalRemark === 'Half Day') {
+                } else if (remark === 'Half Day') {
                     result.halfDayDates.push(date);
-                } else if (att.finalRemark === 'Late & Left Early') {
+                } else if (remark === 'Late & Left Early') {
                     result.lateAndLeftEarlyDates.push(date);
                     result.lateDates.push(date);
                     result.leftEarlyDates.push(date);
-                } else if (att.finalRemark === 'Left Early') {
+                } else if (remark === 'Left Early') {
                     result.leftEarlyDates.push(date);
-                } else if (att.finalRemark === 'Late & Late Logout') {
+                } else if (remark === 'Late & Late Logout') {
                     result.lateAndLateLogoutDates.push(date);
                     result.lateDates.push(date);
                     result.lateLogoutDates.push(date);
-                } else if (att.finalRemark === 'Late Logout') {
+                } else if (remark === 'Late Logout') {
                     result.lateLogoutDates.push(date);
-                } else if (att.finalRemark === 'Early Login' || att.remark === 'Early Login') {
+                } else if (remark === 'Early Login') {
                     result.earlyLoginDates.push(date);
-                } else if (att.finalRemark === 'Late' || att.remark === 'Late') {
+                } else if (remark === 'Late') {
                     result.lateDates.push(date);
-                } else if (att.finalRemark === 'On Time' || att.remark === 'On Time') {
+                } else if (remark === 'On Time') {
                     result.onTimeDates.push(date);
                 } else {
                     result.presentDates.push(date);
@@ -549,10 +578,56 @@ router.get('/employee-calendar', authenticateJWT, async (req, res) => {
                 // Already in leaveDates
             } else if (holidayDatesSet.has(date)) {
                 // Do not mark as absent if it is a holiday
-            } else {
+            } else if (!pendingRegularizeSet.has(date)) {
                 result.absentDates.push(date);
             }
         });
+
+        // Combined present dates list: ALL working days (late marks, early login, on time, half day, regularized, etc.)
+        // strictly excluding leaves and absences
+        result.allPresentDates = Array.from(new Set([
+            ...result.presentDates,
+            ...result.onTimeDates,
+            ...result.lateDates,
+            ...result.earlyLoginDates,
+            ...result.regularizedDates,
+            ...result.halfDayDates,
+            ...result.leftEarlyDates,
+            ...result.lateLogoutDates,
+            ...result.lateAndLeftEarlyDates,
+            ...result.lateAndLateLogoutDates
+        ]));
+
+        // Calculate ready-to-use monthly and all-time stats
+        const currentMonthStr = now.format('YYYY-MM');
+        const monthPresent = result.allPresentDates.filter(d => d.startsWith(currentMonthStr)).length;
+        const monthLate = Array.from(new Set(result.lateDates)).filter(d => d.startsWith(currentMonthStr) && !result.regularizedDates.includes(d)).length;
+        const monthAbsent = result.absentDates.filter(d => d.startsWith(currentMonthStr)).length;
+        const monthLeaves = result.leaveDates.filter(d => d.startsWith(currentMonthStr)).length;
+        const monthTotal = monthPresent + monthAbsent;
+        const monthRate = monthTotal > 0 ? Math.round((monthPresent / monthTotal) * 100) : 0;
+
+        const allTimePresent = result.allPresentDates.length;
+        const allTimeLate = Array.from(new Set(result.lateDates)).filter(d => !result.regularizedDates.includes(d)).length;
+        const allTimeAbsent = result.absentDates.length;
+        const allTimeLeaves = result.leaveDates.length;
+        const allTimeTotal = allTimePresent + allTimeAbsent;
+        const allTimeRate = allTimeTotal > 0 ? Math.round((allTimePresent / allTimeTotal) * 100) : 0;
+
+        result.stats = {
+            present: monthPresent,
+            late: monthLate,
+            absent: monthAbsent,
+            leaves: monthLeaves,
+            rate: monthRate,
+            allTime: {
+                present: allTimePresent,
+                late: allTimeLate,
+                absent: allTimeAbsent,
+                leaves: allTimeLeaves,
+                rate: allTimeRate
+            }
+        };
 
         res.status(200).json(result);
     } catch (err) {
@@ -620,14 +695,14 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
 
         const weekOffNames = employee.shift?.weekOffs ? employee.shift.weekOffs.split(',').map(d => d.trim().toLowerCase()) : [];
         let expectedWorkingDays = 0;
-        let actualWorkingDays = 0;
+        const attendedDaysSet = new Set();
         let completedWorkingHours = 0;
 
-        const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Late & Left Early', 'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time', 'Late Logout', 'Late & Late Logout'];
+        const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'];
         for (const a of attendances) {
-            if (PRESENT_REMARKS.includes(a.finalRemark)) {
+            if (PRESENT_REMARKS.includes(a.finalRemark) || (a.finalRemark && a.finalRemark !== 'Absent')) {
                 if (moment(a.date).isSameOrBefore(today, 'day')) {
-                    actualWorkingDays++;
+                    attendedDaysSet.add(moment(a.date).format('YYYY-MM-DD'));
                 }
             }
             let dayTotal = 0;
@@ -673,7 +748,7 @@ router.get('/dashboard-summary', authenticateJWT, async (req, res) => {
 
         res.status(200).json({
             expectedWorkingDays,
-            actualWorkingDays,
+            actualWorkingDays: attendedDaysSet.size,
             expectedWorkingHours,
             completedWorkingHours,
             salary
@@ -1623,7 +1698,7 @@ router.get('/performance-report', authenticateJWT, async (req, res) => {
       m.add(1, 'month');
     }
 
-    const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Late & Left Early', 'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time', 'Late Logout', 'Late & Late Logout'];
+    const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized'];
     let totalHoursAll = 0;
     let totalOvertimeAll = 0;
     let lateArrivals = 0;
