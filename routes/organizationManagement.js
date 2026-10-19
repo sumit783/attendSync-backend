@@ -998,7 +998,10 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
       m.add(1, 'month');
     }
 
-    const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Late & Left Early', 'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time', 'Late Logout', 'Late & Late Logout'];
+    const PRESENT_REMARKS = [
+      'Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized',
+      'On Time', 'Late', 'Early Login', 'Late & Left Early', 'Late Logout', 'Late & Late Logout'
+    ];
     let totalHoursAll = 0;
     let totalOvertimeAll = 0;
     let lateArrivals = 0;
@@ -2164,7 +2167,10 @@ router.get('/employees/:employeeId/finance-summary', authenticateAdmin, requireO
     }
 
     // 5–7. Fetch attendance + both expense aggregates in parallel
-    const PRESENT_REMARKS = ['Present', 'Half Day', 'Left Early', 'Late & Left Early', 'Clocked In', 'Regularized', 'Early Login', 'Late', 'On Time', 'Late Logout', 'Late & Late Logout'];
+    const PRESENT_REMARKS = [
+      'Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized',
+      'On Time', 'Late', 'Early Login', 'Late & Left Early', 'Late Logout', 'Late & Late Logout'
+    ];
     const [attendances, approvedExpenses, pendingExpenses] = await Promise.all([
       prisma.attendance.findMany({
         where: {
