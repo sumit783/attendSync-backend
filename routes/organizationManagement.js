@@ -925,26 +925,11 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
   // #swagger.tags = ['All Company']
   try {
     const { employeeId } = req.params;
-
-    const employee = await prisma.employee.findFirst({
-      where: { id: employeeId, organizationId: req.organizationId },
-      select: {
-        id: true,
-        employeeName: true,
-        employeeEmail: true,
-        profilePic: true,
-        organizationCode: true,
-        shift: { select: { name: true, startTime: true, endTime: true, weekOffs: true } }
-      }
-    });
-
-    if (!employee) {
-      return res.status(404).json({ message: 'Employee not found in this organization.' });
-    }
+    const moment = require('moment-timezone');
+    const now = moment().tz('Asia/Kolkata');
 
     // ── Date range configuration ───────────────────────────────────────
     const { range, startDate, endDate } = req.query;
-    const now = moment().tz('Asia/Kolkata');
     let rangeStart, rangeEnd;
 
     if (range === 'currentMonth') {
@@ -957,22 +942,66 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
       rangeStart = now.clone().subtract(2, 'months').startOf('month').toDate();
       rangeEnd = now.clone().endOf('month').toDate();
     } else if (range === 'custom' && startDate && endDate) {
-      rangeStart = moment(startDate).startOf('day').toDate();
-      rangeEnd = moment(endDate).endOf('day').toDate();
+      rangeStart = moment.tz(startDate, 'YYYY-MM-DD', 'Asia/Kolkata').startOf('day').toDate();
+      rangeEnd = moment.tz(endDate, 'YYYY-MM-DD', 'Asia/Kolkata').endOf('day').toDate();
     } else {
       // Default: last 6 months
       rangeStart = now.clone().subtract(5, 'months').startOf('month').toDate();
       rangeEnd = now.clone().endOf('month').toDate();
     }
 
-    // ── Fetch all attendance in range ─────────────────────────────────
+    // ── Exclude today (performance evaluates completed shifts only) ─────
+    const yesterday = now.clone().subtract(1, 'day').startOf('day');
+    const yesterdayEnd = now.clone().subtract(1, 'day').endOf('day');
+    const effectiveRangeEnd = moment.min(moment(rangeEnd).tz('Asia/Kolkata'), yesterdayEnd).toDate();
+
+    const employee = await prisma.employee.findFirst({
+      where: { id: employeeId, organizationId: req.organizationId },
+      select: {
+        id: true,
+        employeeName: true,
+        employeeEmail: true,
+        profilePic: true,
+        organizationCode: true,
+        shift: { select: { name: true, startTime: true, endTime: true, weekOffs: true } },
+        organization: {
+          select: {
+            id: true,
+            inTime: true,
+            outTime: true,
+            workingDays: true,
+            holidays: {
+              where: {
+                startDate: { lte: effectiveRangeEnd },
+                endDate: { gte: rangeStart }
+              },
+              select: { startDate: true, endDate: true }
+            }
+          }
+        }
+      }
+    });
+
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found in this organization.' });
+    }
+
+    const organization = employee.organization;
+
+    // ── Fetch all attendance in range (completed days up to yesterday) ───
     const attendances = await prisma.attendance.findMany({
       where: {
         employeeId,
         organizationCode: employee.organizationCode,
-        date: { gte: rangeStart, lte: rangeEnd }
+        date: { gte: rangeStart, lte: effectiveRangeEnd }
       },
-      select: { date: true, totalHours: true, extraHours: true, finalRemark: true, sessions: { orderBy: { clockInTime: 'asc' }, select: { clockInTime: true } } },
+      select: {
+        date: true,
+        totalHours: true,
+        extraHours: true,
+        finalRemark: true,
+        sessions: { orderBy: { clockInTime: 'asc' }, select: { clockInTime: true } }
+      },
       orderBy: { date: 'asc' }
     });
 
@@ -982,15 +1011,31 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
       prisma.task.count({ where: { employeeId, organizationId: req.organizationId, status: 'COMPLETED' } })
     ]);
 
-    // ── Fetch leaves this period ───────────────────────────────────────
-    const approvedLeaves = await prisma.leave.count({
-      where: { employeeId, organizationCode: employee.organizationCode, status: 'Approved', startDate: { gte: rangeStart } }
+    // ── Fetch approved leaves this period (up to yesterday) ────────────
+    const approvedLeavesList = await prisma.leave.findMany({
+      where: {
+        employeeId,
+        status: 'Approved',
+        startDate: { lte: effectiveRangeEnd },
+        endDate: { gte: rangeStart }
+      },
+      select: { startDate: true, endDate: true }
     });
+
+    const leaveDates = new Set();
+    for (const l of approvedLeavesList) {
+      let d = moment.max(moment(l.startDate).tz('Asia/Kolkata').startOf('day'), moment(rangeStart).tz('Asia/Kolkata').startOf('day'));
+      const end = moment.min(moment(l.endDate).tz('Asia/Kolkata').startOf('day'), moment(effectiveRangeEnd).tz('Asia/Kolkata').startOf('day'));
+      while (d.isSameOrBefore(end, 'day')) {
+        leaveDates.add(d.format('YYYY-MM-DD'));
+        d.add(1, 'day');
+      }
+    }
 
     // ── Build monthly hours breakdown ──────────────────────────────────
     const monthlyMap = {};
-    let m = moment(rangeStart).startOf('month');
-    const mEnd = moment(rangeEnd).endOf('month');
+    let m = moment(rangeStart).tz('Asia/Kolkata').startOf('month');
+    const mEnd = moment(effectiveRangeEnd).tz('Asia/Kolkata').endOf('month');
     
     while (m.isSameOrBefore(mEnd)) {
       const key = m.format('YYYY-MM');
@@ -998,21 +1043,24 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
       m.add(1, 'month');
     }
 
-    const PRESENT_REMARKS = [
-      'Present', 'Half Day', 'Left Early', 'Clocked In', 'Regularized',
-      'On Time', 'Late', 'Early Login', 'Late & Left Early', 'Late Logout', 'Late & Late Logout'
-    ];
+    const isPresentRemark = (remark) => {
+      if (!remark) return false;
+      return remark.toLowerCase() !== 'absent';
+    };
+
     let totalHoursAll = 0;
     let totalOvertimeAll = 0;
     let lateArrivals = 0;
     let earlyDepartures = 0;
     let presentDays = 0;
 
-    // Determine shift start for punctuality check
-    const shiftStartParts = employee.shift?.startTime ? employee.shift.startTime.split(':').map(Number) : null;
+    // Determine shift / org start for punctuality check
+    const inTimeStr = employee.shift?.startTime || organization?.inTime || '09:00';
+    const shiftStartParts = inTimeStr.split(':').map(Number);
 
     for (const a of attendances) {
-      const mKey = moment(a.date).format('YYYY-MM');
+      const aMoment = moment(a.date).tz('Asia/Kolkata');
+      const mKey = aMoment.format('YYYY-MM');
       if (!monthlyMap[mKey]) continue;
 
       const dayHours = Math.max(0, a.totalHours || 0);
@@ -1022,36 +1070,39 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
       totalHoursAll += dayHours;
       totalOvertimeAll += dayOvertime;
 
-      if (PRESENT_REMARKS.includes(a.finalRemark)) {
+      if (isPresentRemark(a.finalRemark)) {
         presentDays++;
         monthlyMap[mKey].present++;
 
-        // Punctuality: check if first clock-in was after shift start
-        if (shiftStartParts && a.sessions.length > 0) {
+        // Punctuality check:
+        const remarkIsLate = a.finalRemark && a.finalRemark.toLowerCase().includes('late');
+
+        let clockInIsLate = false;
+        if (shiftStartParts && a.sessions && a.sessions.length > 0 && a.sessions[0].clockInTime) {
           const clockIn = moment(a.sessions[0].clockInTime).tz('Asia/Kolkata');
-          const shiftStartMins = shiftStartParts[0] * 60 + shiftStartParts[1];
+          const shiftStartMins = shiftStartParts[0] * 60 + (shiftStartParts[1] || 0);
           const clockInMins = clockIn.hours() * 60 + clockIn.minutes();
-          // Grace period: 10 minutes
           if (clockInMins > shiftStartMins + 10) {
-            lateArrivals++;
-            monthlyMap[mKey].late++;
+            clockInIsLate = true;
           }
+        }
+
+        if (remarkIsLate || clockInIsLate) {
+          lateArrivals++;
+          monthlyMap[mKey].late++;
         }
       }
 
-      if (a.finalRemark === 'Left Early') earlyDepartures++;
+      if (a.finalRemark && a.finalRemark.toLowerCase().includes('left early')) {
+        earlyDepartures++;
+      }
     }
 
-    // ── Calculate True Absent Days (Handling missing data) ────────────
-    const organization = await prisma.organization.findUnique({
-      where: { id: req.organizationId },
-      select: { holidays: { where: { startDate: { lte: rangeEnd }, endDate: { gte: rangeStart } }, select: { startDate: true, endDate: true } } }
-    });
-
+    // ── Calculate True Absent Days & Working Days (Excluding Today) ────
     const holidayDates = new Set();
     for (const h of (organization?.holidays || [])) {
-      let d = moment(h.startDate);
-      const end = moment(h.endDate);
+      let d = moment(h.startDate).tz('Asia/Kolkata').startOf('day');
+      const end = moment(h.endDate).tz('Asia/Kolkata').startOf('day');
       while (d.isSameOrBefore(end, 'day')) {
         holidayDates.add(d.format('YYYY-MM-DD'));
         d.add(1, 'day');
@@ -1060,18 +1111,35 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
 
     const attendanceMap = {};
     for (const a of attendances) {
-      attendanceMap[moment(a.date).format('YYYY-MM-DD')] = a.finalRemark;
+      attendanceMap[moment(a.date).tz('Asia/Kolkata').format('YYYY-MM-DD')] = a.finalRemark;
     }
 
     let expectedWorkingDays = 0;
     let absentDays = 0;
-    const today = now.clone().startOf('day');
-    const weekOffNames = employee.shift?.weekOffs
+
+    let weekOffNames = employee.shift?.weekOffs
       ? employee.shift.weekOffs.split(',').map(d => d.trim().toLowerCase())
       : [];
 
-    let currentDay = moment(rangeStart);
-    const maxDay = moment.min(moment(rangeEnd), today); // Don't count future days
+    if (weekOffNames.length === 0) {
+      if (organization?.workingDays) {
+        try {
+          const wDays = Array.isArray(organization.workingDays)
+            ? organization.workingDays
+            : JSON.parse(organization.workingDays);
+          const allDays = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+          const workingDaysLower = wDays.map(d => String(d).trim().toLowerCase());
+          weekOffNames = allDays.filter(d => !workingDaysLower.includes(d));
+        } catch (e) {
+          weekOffNames = ['sunday'];
+        }
+      } else {
+        weekOffNames = ['sunday'];
+      }
+    }
+
+    let currentDay = moment(rangeStart).tz('Asia/Kolkata').startOf('day');
+    const maxDay = moment.min(moment(effectiveRangeEnd).tz('Asia/Kolkata').startOf('day'), yesterday);
 
     while (currentDay.isSameOrBefore(maxDay, 'day')) {
       const dateStr = currentDay.format('YYYY-MM-DD');
@@ -1082,10 +1150,11 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
         expectedWorkingDays++;
         
         const remark = attendanceMap[dateStr];
-        // If there's no record, or the record says Absent, it's an absent day
-        // (Assuming approved leaves might have a 'Leave' remark, but if not, they'll be counted as absent here unless we cross-check leaves. 
-        // For now, matching the finance summary logic which only looks at PRESENT_REMARKS).
-        if (!remark || !PRESENT_REMARKS.includes(remark)) {
+        const isPresent = isPresentRemark(remark);
+        const isOnApprovedLeave = leaveDates.has(dateStr);
+
+        // If not attended and not excused on approved leave, count as absent
+        if (!isPresent && !isOnApprovedLeave) {
           absentDays++;
         }
       }
@@ -1098,36 +1167,47 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
 
     // Punctuality score: (present - late) / present * 100
     const punctualityScore = presentDays > 0
-      ? Math.round(((presentDays - lateArrivals) / presentDays) * 100)
-      : 0;
+      ? Math.max(0, Math.round(((presentDays - lateArrivals) / presentDays) * 100))
+      : (expectedWorkingDays === 0 ? 100 : 0);
 
-    // Task completion score
-    const taskScore = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+    // Task completion score (default 100% if no tasks have been assigned)
+    const taskScore = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 100;
 
-    // Attendance score (present days out of expected working days)
+    // Attendance score: attended & approved days out of expected working days
     const attendanceScore = expectedWorkingDays > 0 
-      ? Math.max(0, Math.round(((expectedWorkingDays - absentDays) / expectedWorkingDays) * 100))
-      : 0;
+      ? Math.min(100, Math.max(0, Math.round(((expectedWorkingDays - absentDays) / expectedWorkingDays) * 100)))
+      : (presentDays > 0 ? 100 : 0);
 
-    // Overtime score: capped at 100, based on avg overtime vs expected hours (generous scoring)
+    // Overtime score: capped at 100
     const avgOvertimePerDay = presentDays > 0 ? totalOvertimeAll / presentDays : 0;
-    const overtimeScore = Math.min(100, Math.round(avgOvertimePerDay * 25)); // 4hr+ overtime = 100
+    const overtimeScore = Math.min(100, Math.round(avgOvertimePerDay * 25));
 
     // Consistency: low late arrivals + low early departures
     const consistencyScore = presentDays > 0
       ? Math.max(0, Math.round(100 - ((lateArrivals + earlyDepartures) / presentDays) * 100))
-      : 0;
+      : (expectedWorkingDays === 0 ? 100 : 0);
 
     // Absenteeism rate (% of working days absent over the range)
     const absenteeismRate = expectedWorkingDays > 0 ? parseFloat(((absentDays / expectedWorkingDays) * 100).toFixed(1)) : 0;
 
     // Overall score: weighted average
-    const overallScore = Math.round(
-      punctualityScore * 0.30 +
-      attendanceScore  * 0.25 +
-      taskScore        * 0.25 +
-      consistencyScore * 0.20
-    );
+    let overallScore;
+    if (totalTasks > 0) {
+      overallScore = Math.round(
+        punctualityScore * 0.30 +
+        attendanceScore  * 0.25 +
+        taskScore        * 0.25 +
+        consistencyScore * 0.20
+      );
+    } else {
+      // Redistribute weight evenly across attendance & punctuality metrics when no tasks are assigned
+      overallScore = Math.round(
+        punctualityScore * 0.40 +
+        attendanceScore  * 0.35 +
+        consistencyScore * 0.25
+      );
+    }
+    overallScore = Math.min(100, Math.max(0, overallScore));
 
     const monthlyHours = Object.values(monthlyMap).map(m => ({
       month: m.month,
@@ -1160,7 +1240,7 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
         earlyDepartures,
         presentDays,
         absentDays,
-        approvedLeaves
+        approvedLeaves: leaveDates.size
       },
       tasks: {
         total: totalTasks,
