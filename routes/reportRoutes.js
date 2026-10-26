@@ -272,10 +272,11 @@ router.get("/late-early", async (req, res) => {
         attendances.forEach(a => {
             const dayStr = moment(a.date).tz("Asia/Kolkata").format("ddd");
             if (dayMap[dayStr]) {
-                const isLate = (a.finalRemark && a.finalRemark.toLowerCase().includes('late')) ||
-                               (a.sessions && a.sessions.some(s => s.clockInRemark && s.clockInRemark.toLowerCase().includes('late')));
-                const isEarly = (a.finalRemark && (a.finalRemark.toLowerCase().includes('early') || a.finalRemark.toLowerCase().includes('left early'))) ||
-                                (a.sessions && a.sessions.some(s => s.clockOutRemark && s.clockOutRemark.toLowerCase().includes('early')));
+                const r = (a.finalRemark || '').trim();
+                const isLate = ['Late', 'Late & Left Early', 'Late & Late Logout'].includes(r) ||
+                               (a.sessions && a.sessions.some(s => s.clockInRemark && s.clockInRemark.toLowerCase() === 'late'));
+                const isEarly = r.toLowerCase().includes('left early') ||
+                                (a.sessions && a.sessions.some(s => s.clockOutRemark && s.clockOutRemark.toLowerCase() === 'left early'));
                 if (isLate) dayMap[dayStr].late += 1;
                 if (isEarly) dayMap[dayStr].early += 1;
             }
