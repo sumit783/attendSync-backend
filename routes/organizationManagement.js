@@ -988,19 +988,22 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
 
     const organization = employee.organization;
 
-    // ── Fetch all attendance in range (completed days up to yesterday) ───
+    // ── Fetch all attendance in range ──────────────────────────────────
     const attendances = await prisma.attendance.findMany({
       where: {
         employeeId,
         organizationCode: employee.organizationCode,
-        date: { gte: rangeStart, lte: effectiveRangeEnd }
+        date: { gte: rangeStart, lte: rangeEnd }
       },
       select: {
         date: true,
         totalHours: true,
         extraHours: true,
         finalRemark: true,
-        sessions: { orderBy: { clockInTime: 'asc' }, select: { clockInTime: true } }
+        sessions: { 
+          orderBy: { clockInTime: 'asc' }, 
+          select: { clockInTime: true, clockOutTime: true, duration: true, clockInRemark: true } 
+        }
       },
       orderBy: { date: 'asc' }
     });
@@ -1063,7 +1066,21 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
       const mKey = aMoment.format('YYYY-MM');
       if (!monthlyMap[mKey]) continue;
 
-      const dayHours = Math.max(0, a.totalHours || 0);
+      let dayHours = 0;
+      if (a.sessions && a.sessions.length > 0) {
+        dayHours = a.sessions.reduce((sum, s) => {
+          let duration = s.duration || 0;
+          if (!s.clockOutTime && s.clockInTime) {
+            const nowMom = moment().tz('Asia/Kolkata');
+            duration = Math.max(0, nowMom.diff(moment(s.clockInTime)) / (1000 * 60 * 60));
+          }
+          return sum + duration;
+        }, 0);
+      } else {
+        dayHours = Math.max(0, a.totalHours || 0);
+      }
+      dayHours = parseFloat(dayHours.toFixed(2));
+
       const dayOvertime = Math.max(0, a.extraHours || 0);
 
       monthlyMap[mKey].hours += dayHours;
@@ -1215,12 +1232,23 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
     }
     overallScore = Math.min(100, Math.max(0, overallScore));
 
-    const monthlyHours = Object.values(monthlyMap).map(m => ({
-      month: m.month,
-      hours: Math.max(0, parseFloat(m.hours.toFixed(1))),
-      presentDays: m.present,
-      lateDays: m.late
-    }));
+    const formatHoursToHHMM = (dec) => {
+      if (!dec || dec <= 0) return '00h 00m';
+      const h = Math.floor(dec);
+      const m = Math.round((dec - h) * 60);
+      return `${String(h).padStart(2, '0')}h ${String(m).padStart(2, '0')}m`;
+    };
+
+    const monthlyHours = Object.values(monthlyMap).map(m => {
+      const decHours = Math.max(0, parseFloat(m.hours.toFixed(2)));
+      return {
+        month: m.month,
+        hours: decHours,
+        formattedHours: formatHoursToHHMM(decHours),
+        presentDays: m.present,
+        lateDays: m.late
+      };
+    });
 
     return res.status(200).json({
       employee: {
@@ -1239,6 +1267,7 @@ router.get('/employees/:employeeId/performance-report', authenticateAdmin, requi
         consistency: consistencyScore
       },
       kpis: {
+        totalWorkingHours: Math.max(0, parseFloat(totalHoursAll.toFixed(2))),
         avgDailyHours,
         overtimeHours,
         absenteeismRate,
@@ -1532,6 +1561,12 @@ router.get('/export-attendance', authenticateAdmin, requireOrganizationAccess, a
               calculatedSessionHours += sess.duration;
             } else if (sess.clockInTime && sess.clockOutTime) {
               const diffMs = new Date(sess.clockOutTime).getTime() - new Date(sess.clockInTime).getTime();
+              if (diffMs > 0) {
+                calculatedSessionHours += parseFloat((diffMs / (1000 * 60 * 60)).toFixed(2));
+              }
+            } else if (sess.clockInTime && !sess.clockOutTime) {
+              const nowMom = moment().tz('Asia/Kolkata');
+              const diffMs = nowMom.diff(moment(sess.clockInTime));
               if (diffMs > 0) {
                 calculatedSessionHours += parseFloat((diffMs / (1000 * 60 * 60)).toFixed(2));
               }

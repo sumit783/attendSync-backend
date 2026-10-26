@@ -502,6 +502,12 @@ router.get("/export-attendance", async (req, res) => {
                             if (diffMs > 0) {
                                 calculatedSessionHours += parseFloat((diffMs / (1000 * 60 * 60)).toFixed(2));
                             }
+                        } else if (sess.clockInTime && !sess.clockOutTime) {
+                            const nowMom = moment().tz('Asia/Kolkata');
+                            const diffMs = nowMom.diff(moment(sess.clockInTime));
+                            if (diffMs > 0) {
+                                calculatedSessionHours += parseFloat((diffMs / (1000 * 60 * 60)).toFixed(2));
+                            }
                         }
                     });
 
