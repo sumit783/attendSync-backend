@@ -731,10 +731,11 @@ router.get('/export-analytics', authenticateAdmin, async (req, res) => {
             const mins = Math.round((totalDecimalHours - hours) * 60);
             const workHours = totalDecimalHours > 0 ? `${hours}h ${mins}m` : (clockIn ? 'In Progress' : '0h 0m');
 
-            const isLate = (a.finalRemark && a.finalRemark.toLowerCase().includes('late')) ||
-                           (a.sessions && a.sessions.some(s => s.clockInRemark && s.clockInRemark.toLowerCase().includes('late')));
-            const isEarlyOut = (a.finalRemark && (a.finalRemark.toLowerCase().includes('early') || a.finalRemark.toLowerCase().includes('left early'))) ||
-                               (a.sessions && a.sessions.some(s => s.clockOutRemark && s.clockOutRemark.toLowerCase().includes('early')));
+            const r = (a.finalRemark || '').trim();
+            const isLate = ['Late', 'Late & Left Early', 'Late & Late Logout'].includes(r) ||
+                           (a.sessions && a.sessions.some(s => s.clockInRemark && s.clockInRemark.toLowerCase() === 'late'));
+            const isEarlyOut = r.toLowerCase().includes('left early') ||
+                               (a.sessions && a.sessions.some(s => s.clockOutRemark && s.clockOutRemark.toLowerCase() === 'left early'));
 
             result[emp.organizationId].rows.push({
                 'Employee Name': emp.employeeName || '',

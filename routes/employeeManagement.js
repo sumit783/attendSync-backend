@@ -1774,12 +1774,17 @@ router.get('/performance-report', authenticateJWT, async (req, res) => {
         monthlyMap[mKey].present++;
 
         // Punctuality check:
-        // 1. Remark explicitly indicates late
-        const remarkIsLate = a.finalRemark && a.finalRemark.toLowerCase().includes('late');
+        // 1. Remark explicitly indicates late arrival (exclude 'Late Logout' which is late departure/overtime)
+        const r = (a.finalRemark || '').trim();
+        const isRegularized = r === 'Regularized';
+        const remarkIsLate = !isRegularized && (
+          ['Late', 'Late & Left Early', 'Late & Late Logout'].includes(r) ||
+          (a.sessions && a.sessions.length > 0 && a.sessions[0].clockInRemark === 'Late')
+        );
 
         // 2. Or clock-in time was after shift start + 10 min grace period
         let clockInIsLate = false;
-        if (shiftStartParts && a.sessions && a.sessions.length > 0 && a.sessions[0].clockInTime) {
+        if (!isRegularized && shiftStartParts && a.sessions && a.sessions.length > 0 && a.sessions[0].clockInTime) {
           const clockIn = moment(a.sessions[0].clockInTime).tz('Asia/Kolkata');
           const shiftStartMins = shiftStartParts[0] * 60 + (shiftStartParts[1] || 0);
           const clockInMins = clockIn.hours() * 60 + clockIn.minutes();
