@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const prisma = require('../prisma/client');
 const moment = require('moment-timezone');
+const crypto = require('crypto');
 
 function parseMomTime(dateStr, timeStr) {
   if (!timeStr) return null;
@@ -13,6 +14,26 @@ function parseMomTime(dateStr, timeStr) {
     'YYYY-MM-DD HH:mm:ss'
   ];
   return moment.tz(dateStr + ' ' + timeStr, formats, 'Asia/Kolkata');
+}
+
+/**
+ * Generates a deterministic pseudo-random offset in seconds for an employee on a given date.
+ * Using employeeId + date ensures:
+ * 1. The time is different for each employee.
+ * 2. The time is different each day.
+ * 3. The time remains stable across repeated cron checks on the same day.
+ *
+ * @param {string} seedString - Unique seed (e.g. employeeId + '_' + dateStr + '_login')
+ * @param {number} minMinutes - Minimum offset in minutes (default: 5)
+ * @param {number} maxMinutes - Maximum offset in minutes (default: 18)
+ * @returns {number} Offset in seconds (between minMinutes*60 and maxMinutes*60)
+ */
+function getShuffledOffsetSeconds(seedString, minMinutes = 5, maxMinutes = 18) {
+  const hash = crypto.createHash('md5').update(seedString).digest('hex');
+  const num = parseInt(hash.substring(0, 8), 16);
+  const minSec = minMinutes * 60;
+  const maxSec = maxMinutes * 60;
+  return minSec + (num % (maxSec - minSec + 1));
 }
 
 async function processAutoAttendance() {
@@ -53,8 +74,20 @@ async function processAutoAttendance() {
         shiftEndToday.add(1, 'day');
       }
 
+      // Shuffled Login: 5 to 18 minutes earlier than shiftStartToday (e.g., 9:50, 9:45, 9:43 for 10:00 AM)
+      const loginOffsetSec = getShuffledOffsetSeconds(`${employee.id}_${todayDateStr}_login`, 5, 18);
+      let shuffledLoginTime = shiftStartToday.clone().subtract(loginOffsetSec, 'seconds');
+      // Prevent rolling into previous calendar day if shift starts near midnight
+      if (!shuffledLoginTime.isSame(shiftStartToday, 'day')) {
+        shuffledLoginTime = shiftStartToday.clone().startOf('day');
+      }
+
+      // Shuffled Logout for today's shift window: 5 to 18 minutes after shiftEndToday
+      const logoutOffsetSec = getShuffledOffsetSeconds(`${employee.id}_${todayDateStr}_logout`, 5, 18);
+      const shuffledLogoutTime = shiftEndToday.clone().add(logoutOffsetSec, 'seconds');
+
       // 1. AUTO LOGIN CHECK (For Today's shift window):
-      if (currentMom.isSameOrAfter(shiftStartToday) && currentMom.isBefore(shiftEndToday)) {
+      if (currentMom.isSameOrAfter(shuffledLoginTime) && currentMom.isBefore(shuffledLogoutTime)) {
         const startOfDay = moment.tz(todayDateStr + ' 00:00:00', 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata').utc().toDate();
         const endOfDay = moment.tz(todayDateStr + ' 23:59:59', 'YYYY-MM-DD HH:mm:ss', 'Asia/Kolkata').utc().toDate();
 
@@ -67,7 +100,7 @@ async function processAutoAttendance() {
         });
 
         if (!existingAttendance) {
-          const loginTimeDate = shiftStartToday.utc().toDate();
+          const loginTimeDate = shuffledLoginTime.utc().toDate();
           await prisma.attendance.create({
             data: {
               employeeId: employee.id,
@@ -86,7 +119,7 @@ async function processAutoAttendance() {
             }
           });
           loginCount++;
-          console.log('[AutoAttendance] Auto-logged in employee ' + employee.employeeName + ' for ' + todayDateStr);
+          console.log(`[AutoAttendance] Auto-logged in employee ${employee.employeeName} at ${shuffledLoginTime.format('hh:mm:ss A')} (scheduled: ${inTimeStr}) for ${todayDateStr}`);
         }
       }
 
@@ -116,8 +149,12 @@ async function processAutoAttendance() {
           sessionShiftEnd.add(1, 'day');
         }
 
-        if (currentMom.isSameOrAfter(sessionShiftEnd)) {
-          const scheduledOutDate = sessionShiftEnd.utc().toDate();
+        // Shuffled Logout: 5 to 18 minutes after sessionShiftEnd (e.g., 7:05, 7:12, 7:17 for 7:00 PM)
+        const sessionLogoutOffsetSec = getShuffledOffsetSeconds(`${employee.id}_${attDateStr}_logout`, 5, 18);
+        const shuffledSessionLogout = sessionShiftEnd.clone().add(sessionLogoutOffsetSec, 'seconds');
+
+        if (currentMom.isSameOrAfter(shuffledSessionLogout)) {
+          const scheduledOutDate = shuffledSessionLogout.utc().toDate();
           const clockInTime = new Date(session.clockInTime);
           const duration = Math.max(0.01, parseFloat(((scheduledOutDate - clockInTime) / (1000 * 60 * 60)).toFixed(2)));
 
@@ -150,7 +187,7 @@ async function processAutoAttendance() {
           });
 
           logoutCount++;
-          console.log('[AutoAttendance] Auto-logged out employee ' + employee.employeeName);
+          console.log(`[AutoAttendance] Auto-logged out employee ${employee.employeeName} at ${shuffledSessionLogout.format('hh:mm:ss A')} (scheduled: ${outTimeStr})`);
         }
       }
     }
@@ -199,7 +236,6 @@ cron.schedule('*/15 * * * *', async () => {
       include: { attendance: { include: { employee: { include: { shift: true, organization: true } } } } }
     });
     const currentMom = moment().tz('Asia/Kolkata');
-    const currentDate = currentMom.format('YYYY-MM-DD');
     for (const session of openSessions) {
       const employee = session.attendance.employee;
       const organization = employee.organization;
@@ -207,23 +243,30 @@ cron.schedule('*/15 * * * *', async () => {
       const inTimeStr = (employee.shift && employee.shift.startTime) ? employee.shift.startTime : organization.inTime;
       const outTimeStr = (employee.shift && employee.shift.endTime) ? employee.shift.endTime : organization.outTime;
       if (!outTimeStr || !inTimeStr) continue;
-      const orgInFormat = inTimeStr.includes('AM') || inTimeStr.includes('PM') ? 'hh:mm A' : 'HH:mm';
-      const orgOutFormat = outTimeStr.includes('AM') || outTimeStr.includes('PM') ? 'hh:mm A' : 'HH:mm';
-      let shiftStart = moment.tz(currentDate + ' ' + inTimeStr, 'YYYY-MM-DD ' + orgInFormat, 'Asia/Kolkata');
-      let shiftEnd = moment.tz(currentDate + ' ' + outTimeStr, 'YYYY-MM-DD ' + orgOutFormat, 'Asia/Kolkata');
-      let isOvernight = false;
-      if (shiftEnd.isBefore(shiftStart)) { isOvernight = true; shiftEnd.add(1, 'day'); }
-      if (isOvernight && currentMom.isBefore(moment.tz(currentDate + ' ' + inTimeStr, 'YYYY-MM-DD ' + orgInFormat, 'Asia/Kolkata'))) {
-        shiftStart.subtract(1, 'day'); shiftEnd.subtract(1, 'day');
+
+      const attDateMom = moment(session.attendance.date).tz('Asia/Kolkata');
+      const attDateStr = attDateMom.format('YYYY-MM-DD');
+
+      let sessionShiftStart = parseMomTime(attDateStr, inTimeStr);
+      let sessionShiftEnd = parseMomTime(attDateStr, outTimeStr);
+      if (!sessionShiftStart || !sessionShiftEnd) continue;
+
+      let isOvernight = sessionShiftEnd.isSameOrBefore(sessionShiftStart);
+      if (isOvernight) {
+        sessionShiftEnd.add(1, 'day');
       }
-      if (currentMom.isAfter(shiftEnd)) {
-        const organizationOutTime = shiftEnd.utc().toDate();
+
+      const logoutOffsetSec = getShuffledOffsetSeconds(`${employee.id}_${attDateStr}_org_logout`, 5, 18);
+      const shuffledShiftEnd = sessionShiftEnd.clone().add(logoutOffsetSec, 'seconds');
+
+      if (currentMom.isSameOrAfter(shuffledShiftEnd)) {
+        const organizationOutTime = shuffledShiftEnd.utc().toDate();
         const clockInTime = session.clockInTime;
-        const duration = Math.max(0.01, ((organizationOutTime - clockInTime) / (1000 * 60 * 60)).toFixed(2));
+        const duration = Math.max(0.01, parseFloat(((organizationOutTime - clockInTime) / (1000 * 60 * 60)).toFixed(2)));
         await prisma.session.update({ where: { id: session.id }, data: { clockOutTime: organizationOutTime, duration, clockOutRemark: 'On Time (Auto)' } });
         const updatedSessions = await prisma.session.findMany({ where: { attendanceId: session.attendance.id } });
-        const totalHours = updatedSessions.reduce((acc, s) => acc + (s.duration || 0), 0);
-        const expectedDurationMs = shiftEnd.diff(shiftStart);
+        const totalHours = parseFloat(updatedSessions.reduce((acc, s) => acc + (s.duration || 0), 0).toFixed(2));
+        const expectedDurationMs = sessionShiftEnd.diff(sessionShiftStart);
         const expectedHours = expectedDurationMs > 0 ? expectedDurationMs / (1000 * 60 * 60) : 0;
         let extraHours = 0;
         if (expectedHours > 0 && totalHours > expectedHours) extraHours = parseFloat((totalHours - expectedHours).toFixed(2));
