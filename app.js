@@ -40,6 +40,10 @@ require('./Handlers/cronJobs'); // This will execute and schedule your cron jobs
 process.env.TZ = "Asia/Kolkata";
 
 const app = express();
+
+// Trust reverse proxy (Hostinger, Nginx) so Express reads client IP and prevents rate-limit ValidationError
+app.set('trust proxy', 1);
+
 connectDB();
 
 // Set security HTTP headers
@@ -84,7 +88,10 @@ app.use(cors({
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 10000, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again in 15 minutes.'
+  message: 'Too many requests from this IP, please try again in 15 minutes.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { xForwardedForHeader: false }
 });
 // Apply limiter to all requests. We could be more specific (e.g. /api/)
 app.use('/api/', limiter);
